@@ -100,12 +100,12 @@ public class CppModClass extends CppBaseModClass {
 	   nMethod.addInitCall("ordt_reg(_m_startaddress, _m_endaddress)");
 	   
 	   // overload write methods
-	   nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int write(const uint64_t &addr, const ordt_data &wdata)");
+	   nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int write_body(const uint64_t &addr, const ordt_data &wdata)");
 	   nMethod.addStatement("#ifdef ORDT_PIO_VERBOSE");
 	   nMethod.addStatement("   std::cout << \"--> write of reg " + className + " at addr=\"<< addr << \", data=\" << wdata.to_string() << \"\\n\";");
 	   nMethod.addStatement("#endif");
 	   nMethod.addStatement("   if (this->hasStartAddress(addr)) {");
-	   nMethod.addStatement("      this->write(wdata);");
+	   nMethod.addStatement("      this->set(wdata);");
 	   nMethod.addStatement("      return 0;");
 	   nMethod.addStatement("   }");
 	   nMethod.addStatement("#ifdef ORDT_PIO_VERBOSE");
@@ -113,17 +113,17 @@ public class CppModClass extends CppBaseModClass {
 	   nMethod.addStatement("#endif");
 	   nMethod.addStatement("   return 8;" );
 	   
-	   nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void write(const ordt_data &wdata)");  
-	   newClass.tagMethod("write", nMethod);  // tag this method so field info can be appended
+	   nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void set(const ordt_data &wdata)");  
+	   newClass.tagMethod("set", nMethod);  // tag this method so field info can be appended
 	   nMethod.addStatement("std::lock_guard<std::mutex> m_guard(m_mutex);");  // grab reg lock
 	   
 	   // overload read methods
-	   nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int read(const uint64_t &addr, ordt_data &rdata)");  
+	   nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int read_body(const uint64_t &addr, ordt_data &rdata)");  
 	   nMethod.addStatement("#ifdef ORDT_PIO_VERBOSE");
 	   nMethod.addStatement("   std::cout << \"--> read of reg " + className + " at addr=\"<< addr << \"\\n\";");
 	   nMethod.addStatement("#endif");
 	   nMethod.addStatement("   if (this->hasStartAddress(addr)) {");
-	   nMethod.addStatement("      this->read(rdata);");
+	   nMethod.addStatement("      this->get(rdata);");
 	   nMethod.addStatement("      return 0;");
 	   nMethod.addStatement("   }");
 	   nMethod.addStatement("#ifdef ORDT_PIO_VERBOSE");
@@ -132,8 +132,8 @@ public class CppModClass extends CppBaseModClass {
 	   nMethod.addStatement("   rdata.clear();");
 	   nMethod.addStatement("   return 8;" );
 	   
-	   nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void read(ordt_data &rdata)");  
-	   newClass.tagMethod("read", nMethod);  // tag this method so field info can be appended
+	   nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void get(ordt_data &rdata)");  
+	   newClass.tagMethod("get", nMethod);  // tag this method so field info can be appended
 	   nMethod.addStatement("rdata.clear();");
 	   nMethod.addStatement("for (uint64_t widx=0; widx<((m_endaddress - m_startaddress + 1)/4); widx++) rdata.push_back(0);");
 	   return newClass;
@@ -191,11 +191,11 @@ public class CppModClass extends CppBaseModClass {
 		   else initStr = resetVal.toFormat(NumBase.Hex, NumFormat.Address);
 		   this.addInitCall(instName + "(" + lowIndex + ", " + width + ", " + initStr + ", " + rMode + ", " + wMode + ")");		   
 	   }
-	   // add field read/write calls in reg read method
-	   CppMethod read = this.getTaggedMethod("read");
-	   read.addStatement(instName + ".read(rdata);");
-	   CppMethod write = this.getTaggedMethod("write");
-	   write.addStatement(instName + ".write(wdata);");
+	   // add field read/write calls in reg get/set methods
+	   CppMethod get = this.getTaggedMethod("get");
+	   get.addStatement(instName + ".get(rdata);");
+	   CppMethod set = this.getTaggedMethod("set");
+	   set.addStatement(instName + ".set(wdata);");
    }
 
 }

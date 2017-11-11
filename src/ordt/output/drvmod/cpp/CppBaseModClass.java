@@ -366,8 +366,8 @@ public class CppBaseModClass {
 		nMethod = newClass.addMethod(Vis.PUBLIC, "std::string to_string() const");
 		nMethod.addStatement("std::stringstream ss;");
 		nMethod.addStatement("ss << \"{\" << std::hex << std::showbase;");
-		nMethod.addStatement("for (size_t idx=this->size() - 1; idx >= 0; idx--) ");
-		nMethod.addStatement("   ss << \" \" << this->at(idx);");
+		nMethod.addStatement("for (size_t idx=this->size(); idx > 0; idx--) ");
+		nMethod.addStatement("   ss << \" \" << this->at(idx - 1);");
 		nMethod.addStatement("ss << \" }\";");
 		nMethod.addStatement("return ss.str();");
 		

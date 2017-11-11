@@ -222,7 +222,7 @@ public class CppModBuilder extends OutputBuilder {
     		writeStmt(commonHppBw, 0, "#include <algorithm>");  // min/max  
     		writeStmt(commonHppBw, 0, "#include <string>");    
     		writeStmt(commonHppBw, 0, "#include <sstream>");    
-    	    writeStmt(commonHppBw, 0, "#define quote(x) #x"); // for debug display of vars
+                writeStmt(commonHppBw, 0, "#define quote(x) #x"); // for debug display of vars
     		writeStmt(commonHppBw, 0, "");		   
    		
     		// write the cpp file header
@@ -236,7 +236,7 @@ public class CppModBuilder extends OutputBuilder {
     		writeStmts(commonHppBw, newClass.genMethods(true, true));  // template methods with namespace
     		writeStmts(commonCppBw, newClass.genMethods(true));  // non-template methods with namespace
     		
-            // close up hpp file
+                // close up hpp file
     		writeStmt(commonHppBw, 0, "#endif // __ORDT_PIO_COMMON_HPP_INCLUDED__");
     		closeBufferedWriter(commonHppBw);
     		
@@ -256,14 +256,20 @@ public class CppModBuilder extends OutputBuilder {
     		writeStmt(hppBw, 0, "");	
     		writeStmt(hppBw, 0, "#include <vector>");
     		writeStmt(hppBw, 0, "#include <iostream>");  
-    		writeStmt(hppBw, 0, "#include <memory>");  // unique_ptr, etc g++  
+    		writeStmt(hppBw, 0, "#include <memory>");     // unique_ptr, etc g++  
     		writeStmt(hppBw, 0, "#include <cstdint>");  
     		writeStmt(hppBw, 0, "#include <algorithm>");  // min/max  
     		writeStmt(hppBw, 0, "#include <string>");    
     		writeStmt(hppBw, 0, "#include <sstream>");    
-    		writeStmt(hppBw, 0, "#include <mutex>");    // reg mutex
-    		writeStmt(hppBw, 0, "#include <atomic>");    // field data atomic
-    	    writeStmt(hppBw, 0, "#define quote(x) #x"); // for debug display of vars
+    		writeStmt(hppBw, 0, "#include <mutex>");      // reg mutex
+    		writeStmt(hppBw, 0, "#include <atomic>");     // field data atomic
+                writeStmt(hppBw, 0, "#include <functional>"); // callback functions
+                writeStmt(hppBw, 0, "#include <list>");
+                writeStmt(hppBw, 0, "#define quote(x) #x");   // for debug display of vars
+    		writeStmt(hppBw, 0, "");		   
+                writeStmt(hppBw, 0, "#ifdef ORDT_NAMESPACE");
+                writeStmt(hppBw, 0, "namespace ORDT_NAMESPACE {");
+                writeStmt(hppBw, 0, "#endif");
     		writeStmt(hppBw, 0, "");		   
    		
     		// write the cpp file header
@@ -275,11 +281,35 @@ public class CppModBuilder extends OutputBuilder {
     		// define r/w modes
     		writeStmt(hppBw, 0, "enum ordt_read_mode_t : uint8_t {r_none, r_std, r_clr};");
     		writeStmt(hppBw, 0, "enum ordt_write_mode_t : uint8_t {w_none, w_std, w_1clr, w_1set};");
+    		writeStmt(hppBw, 0, "");
+
+    		// define callback types
+                writeStmt(hppBw, 0, "enum ordt_cb_result_t {");
+                writeStmt(hppBw, 0, "  cb_ok,        // run to completion and respond as usual");
+                writeStmt(hppBw, 0, "  cb_abort,     // return immediately and respond as usual");
+                writeStmt(hppBw, 0, "  cb_abort_ok,  // return immediately with good response");
+                writeStmt(hppBw, 0, "  cb_abort_err, // return immediately with error response");
+                writeStmt(hppBw, 0, "  cb_force_ok,  // run to completion and return good response");
+                writeStmt(hppBw, 0, "  cb_force_err, // run to completion and return error response");
+                writeStmt(hppBw, 0, "};");
+                writeStmt(hppBw, 0, "class ordt_addr_elem;");
+                writeStmt(hppBw, 0, "//XXX Is it a good idea to provide the write data?");
+                writeStmt(hppBw, 0, "typedef std::function<");
+                writeStmt(hppBw, 0, "  ordt_cb_result_t(ordt_addr_elem &, const uint64_t &, const ordt_data &)>");
+                writeStmt(hppBw, 0, "  ordt_write_cb_t;");
+                writeStmt(hppBw, 0, "//XXX Allow the callback to return read data?");
+                writeStmt(hppBw, 0, "typedef std::function<");
+                writeStmt(hppBw, 0, "  ordt_cb_result_t(ordt_addr_elem &, const uint64_t &)> ordt_read_cb_t;");
+                writeStmt(hppBw, 0, "");
 
     		// write the model classes
     		writeClasses();
     		
-            // close up hpp file
+                // close up hpp file
+                writeStmt(hppBw, 0, "#ifdef ORDT_NAMESPACE");
+                writeStmt(hppBw, 0, "}");
+                writeStmt(hppBw, 0, "#endif");
+                
     		writeStmt(hppBw, 0, "#endif // __ORDT_PIO_HPP_INCLUDED__");
     		closeBufferedWriter(hppBw);
     		
@@ -316,13 +346,82 @@ public class CppModBuilder extends OutputBuilder {
 		CppModClass newClass = new CppModClass(className);
 		newClass.addDefine(Vis.PROTECTED, "uint64_t m_startaddress");
 		newClass.addDefine(Vis.PROTECTED, "uint64_t m_endaddress");
+                newClass.addDefine(Vis.PROTECTED, "int m_response");
+                newClass.addDefine(Vis.PROTECTED, "bool m_response_forced");
+                newClass.addDefine(Vis.PROTECTED, "std::list<ordt_write_cb_t> m_pre_write_cbs");
+                newClass.addDefine(Vis.PROTECTED, "std::list<ordt_write_cb_t> m_post_write_cbs");
+                newClass.addDefine(Vis.PROTECTED, "std::list<ordt_read_cb_t> m_pre_read_cbs");
+                newClass.addDefine(Vis.PROTECTED, "std::list<ordt_read_cb_t> m_post_read_cbs");
 		// constructors
 		CppMethod nMethod = newClass.addConstructor(Vis.PUBLIC, className + "(uint64_t _m_startaddress, uint64_t _m_endaddress)");  
 		nMethod.addInitCall("m_startaddress(_m_startaddress)");
 		nMethod.addInitCall("m_endaddress(_m_endaddress)");
+                nMethod.addInitCall("m_response(0)");
+                nMethod.addInitCall("m_response_forced(false)");
+                nMethod.addInitCall("m_pre_write_cbs()");
+                nMethod.addInitCall("m_post_write_cbs()");
+                nMethod.addInitCall("m_pre_read_cbs()");
+                nMethod.addInitCall("m_post_read_cbs()");
 		// methods
-		newClass.addMethod(Vis.PUBLIC, "pure virtual int write(const uint64_t &addr, const ordt_data &wdata)");
-		newClass.addMethod(Vis.PUBLIC, "pure virtual int read(const uint64_t &addr, ordt_data &rdata)");  
+                nMethod = newClass.addMethod(Vis.PROTECTED, "virtual bool pre_write(const uint64_t &addr, const ordt_data &wdata)");
+                nMethod.addStatement("for (auto const& cb : m_pre_write_cbs) {");
+                nMethod.addStatement("  ordt_cb_result_t cb_result = cb(*this, addr, wdata);");
+                nMethod.addStatement("  bool return_now = interpret_cb_result(cb_result);");
+                nMethod.addStatement("  if (return_now) return true;");
+                nMethod.addStatement("}");
+                nMethod.addStatement("return false;");
+
+                nMethod = newClass.addMethod(Vis.PROTECTED, "virtual bool post_write(const uint64_t &addr, const ordt_data &wdata)");
+                nMethod.addStatement("for (auto const& cb : m_post_write_cbs) {");
+                nMethod.addStatement("  ordt_cb_result_t cb_result = cb(*this, addr, wdata);");
+                nMethod.addStatement("  bool return_now = interpret_cb_result(cb_result);");
+                nMethod.addStatement("  if (return_now) return true;");
+                nMethod.addStatement("}");
+                nMethod.addStatement("return false;");
+
+                nMethod = newClass.addMethod(Vis.PROTECTED, "virtual bool pre_read(const uint64_t &addr)");
+                nMethod.addStatement("for (auto const& cb : m_pre_read_cbs) {");
+                nMethod.addStatement("  ordt_cb_result_t cb_result = cb(*this, addr);");
+                nMethod.addStatement("  bool return_now = interpret_cb_result(cb_result);");
+                nMethod.addStatement("  if (return_now) return true;");
+                nMethod.addStatement("}");
+                nMethod.addStatement("return false;");
+
+                nMethod = newClass.addMethod(Vis.PROTECTED, "virtual bool post_read(const uint64_t &addr)");
+                nMethod.addStatement("for (auto const& cb : m_post_read_cbs) {");
+                nMethod.addStatement("  ordt_cb_result_t cb_result = cb(*this, addr);");
+                nMethod.addStatement("  bool return_now = interpret_cb_result(cb_result);");
+                nMethod.addStatement("  if (return_now) return true;");
+                nMethod.addStatement("}");
+                nMethod.addStatement("return false;");
+
+                newClass.addMethod(Vis.PROTECTED, "pure virtual int write_body(const uint64_t &addr, const ordt_data &wdata)");
+                newClass.addMethod(Vis.PROTECTED, "pure virtual int read_body(const uint64_t &addr, ordt_data &rdata)");
+
+		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int write(const uint64_t &addr, const ordt_data &wdata)");
+                nMethod.addStatement("m_response = 0;");
+                nMethod.addStatement("m_response_forced = false;");
+                nMethod.addStatement("bool return_now = false;");
+                nMethod.addStatement("return_now = pre_write(addr, wdata);");
+                nMethod.addStatement("if (return_now) return m_response;");
+                nMethod.addStatement("int body_response = write_body(addr, wdata);");
+                nMethod.addStatement("if (!m_response_forced)");
+                nMethod.addStatement("  m_response |= body_response;");
+                nMethod.addStatement("post_write(addr, wdata);");
+                nMethod.addStatement("return m_response;");
+
+		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int read(const uint64_t &addr, ordt_data &rdata)");  
+                nMethod.addStatement("m_response = 0;");
+                nMethod.addStatement("m_response_forced = false;");
+                nMethod.addStatement("bool return_now = false;");
+                nMethod.addStatement("return_now = pre_read(addr);");
+                nMethod.addStatement("if (return_now) return m_response;");
+                nMethod.addStatement("int body_response = read_body(addr, rdata);");
+                nMethod.addStatement("if (!m_response_forced)");
+                nMethod.addStatement("  m_response |= body_response;");
+                nMethod.addStatement("post_read(addr);");
+                nMethod.addStatement("return m_response;");
+
 		nMethod = newClass.addMethod(Vis.PUBLIC, "bool containsAddress(const uint64_t &addr)");
 		//nMethod.addStatement("std::cout << \"ordt_addr_elem containsAddress: addr=\"<< addr << \" start=\" << m_startaddress << \" end=\" << m_endaddress << \"\\n\";");
 		nMethod.addStatement("return ((addr >= m_startaddress) && (addr <= m_endaddress));");
@@ -336,6 +435,45 @@ public class CppModBuilder extends OutputBuilder {
 		//nMethod.addStatement("std::cout << \"ordt_addr_elem hasStartAddress: addr=\"<< addr << \" start=\" << m_startaddress << \" end=\" << m_endaddress << \"\\n\";");
 		nMethod.addStatement("return (addr == m_startaddress);");
 		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void update_child_ptrs()");  // empty placeholder defined in design-specific regset classes - called after elem copy in jdrl_addr_elem_array to fix pointers  
+                nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void register_pre_write_cb(const ordt_write_cb_t &cb)");
+                nMethod.addStatement("m_pre_write_cbs.push_back(cb);");
+                nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void register_post_write_cb(const ordt_write_cb_t &cb)");
+                nMethod.addStatement("m_post_write_cbs.push_back(cb);");
+                nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void register_pre_read_cb(const ordt_read_cb_t &cb)");
+                nMethod.addStatement("m_pre_read_cbs.push_back(cb);");
+                nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void register_post_read_cb(const ordt_read_cb_t &cb)");
+                nMethod.addStatement("m_post_read_cbs.push_back(cb);");
+                nMethod = newClass.addMethod(Vis.PRIVATE, "bool interpret_cb_result(const ordt_cb_result_t cb_result)");
+                nMethod.addStatement("bool return_now = false;");
+                nMethod.addStatement("switch(cb_result) {");
+                nMethod.addStatement("case cb_ok:");
+                nMethod.addStatement("  break;");
+                nMethod.addStatement("case cb_abort:");
+                nMethod.addStatement("  return_now = true;");
+                nMethod.addStatement("  break;");
+                nMethod.addStatement("case cb_abort_ok:");
+                nMethod.addStatement("  return_now = true;");
+                nMethod.addStatement("  m_response = 0;");
+                nMethod.addStatement("  break;");
+                nMethod.addStatement("case cb_abort_err:");
+                nMethod.addStatement("  return_now = true;");
+                nMethod.addStatement("  m_response = 8;");
+                nMethod.addStatement("  break;");
+                nMethod.addStatement("case cb_force_ok: ");
+                nMethod.addStatement("  if (!m_response_forced) {");
+                nMethod.addStatement("    m_response = 0; ");
+                nMethod.addStatement("    m_response_forced = true;");
+                nMethod.addStatement("  }");
+                nMethod.addStatement("  break;");
+                nMethod.addStatement("case cb_force_err:");
+                nMethod.addStatement("  if (!m_response_forced) {");
+                nMethod.addStatement("    m_response = 8;");
+                nMethod.addStatement("    m_response_forced = true;");
+                nMethod.addStatement("  }");
+                nMethod.addStatement("  break;");
+                nMethod.addStatement("}");
+                nMethod.addStatement("return return_now;");
+
 		// write class
 		writeStmts(hppBw, newClass.genHeader(false)); // header with no include guards
 		writeStmts(cppBw, newClass.genMethods(true));  // methods with namespace
@@ -375,7 +513,7 @@ public class CppModBuilder extends OutputBuilder {
 		nMethod.addStatement("return nullptr;");
 		
 		// methods
-		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int write(const uint64_t &addr, const ordt_data &wdata)");  
+		nMethod = newClass.addMethod(Vis.PROTECTED, "virtual int write_body(const uint64_t &addr, const ordt_data &wdata)");  
 		//nMethod.addStatement("   std::cout << \"regset write: ---- addr=\"<< addr << \", data=\" << wdata.to_string() << \"\\n\";");
 		nMethod.addStatement("   if (this->containsAddress(addr)) {");
 		//nMethod.addStatement("      std::cout << \"regset write: ordt_regset contains addr=\"<< addr << \"\\n\";");
@@ -388,7 +526,7 @@ public class CppModBuilder extends OutputBuilder {
 		nMethod.addStatement("#endif");
 		nMethod.addStatement("   return 8;" );
 		
-		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int read(const uint64_t &addr, ordt_data &rdata)");  
+		nMethod = newClass.addMethod(Vis.PROTECTED, "virtual int read_body(const uint64_t &addr, ordt_data &rdata)");  
 		//nMethod.addStatement("   std::cout << \"regset read: ---- addr=\"<< addr << \"\\n\";");
 		nMethod.addStatement("   if (this->containsAddress(addr)) {");
 		//nMethod.addStatement("      std::cout << \"regset read: ordt_regset contains addr=\"<< addr << \"\\n\";");
@@ -416,10 +554,10 @@ public class CppModBuilder extends OutputBuilder {
 		writeStmt(hppBw, 0, "  protected:");
 		writeStmt(hppBw, 0, "    std::vector<T> vec;");  
 		writeStmt(hppBw, 0, "    uint64_t m_stride;");  
+		writeStmt(hppBw, 0, "    virtual int write_body(const uint64_t &addr, const ordt_data &wdata);");
+		writeStmt(hppBw, 0, "    virtual int read_body(const uint64_t &addr, ordt_data &rdata);");
 		writeStmt(hppBw, 0, "  public:");
 		writeStmt(hppBw, 0, "    ordt_addr_elem_array(uint64_t _m_startaddress, uint64_t _m_endaddress, int _reps, uint64_t _m_stride);");
-		writeStmt(hppBw, 0, "    virtual int write(const uint64_t &addr, const ordt_data &wdata);");
-		writeStmt(hppBw, 0, "    virtual int read(const uint64_t &addr, ordt_data &rdata);");
 		writeStmt(hppBw, 0, "};");
 		writeStmt(hppBw, 0, "");
 
@@ -440,7 +578,7 @@ public class CppModBuilder extends OutputBuilder {
 		writeStmt(hppBw, 0, "");
 
 		writeStmt(hppBw, 0, "template<typename T>");
-		writeStmt(hppBw, 0, "int ordt_addr_elem_array<T>::write(const uint64_t &addr, const ordt_data &wdata) {");
+		writeStmt(hppBw, 0, "int ordt_addr_elem_array<T>::write_body(const uint64_t &addr, const ordt_data &wdata) {");
 		//writeStmt(hppBw, 0, "   std::cout << \"addr_elem array write: ---- addr=\"<< addr << \", data=\" << wdata.to_string() << \"\\n\";");
 		writeStmt(hppBw, 0, "   if (this->containsAddress(addr)) {");
 		writeStmt(hppBw, 0, "      uint64_t idx = (addr - m_startaddress) / m_stride;");
@@ -455,7 +593,7 @@ public class CppModBuilder extends OutputBuilder {
 		writeStmt(hppBw, 0, "");
 		
 		writeStmt(hppBw, 0, "template<typename T>");
-		writeStmt(hppBw, 0, "int ordt_addr_elem_array<T>::read(const uint64_t &addr, ordt_data &rdata) {");
+		writeStmt(hppBw, 0, "int ordt_addr_elem_array<T>::read_body(const uint64_t &addr, ordt_data &rdata) {");
 		//writeStmt(hppBw, 0, "   std::cout << \"addr_elem array read: ---- addr=\"<< addr << \", start=\" << m_startaddress << \", end=\" << m_endaddress<< \", stride=\" << m_stride<< \"\\n\";");
 		writeStmt(hppBw, 0, "   if (this->containsAddress(addr)) {");
 		writeStmt(hppBw, 0, "      uint64_t idx = (addr - m_startaddress) / m_stride;");
@@ -478,6 +616,8 @@ public class CppModBuilder extends OutputBuilder {
 		newClass.addParent("ordt_addr_elem");
 		// define mutex for reg
 		newClass.addDefine(Vis.PUBLIC, "std::mutex  m_mutex");
+                newClass.addDefine(Vis.PUBLIC, "using ordt_addr_elem::write");
+                newClass.addDefine(Vis.PUBLIC, "using ordt_addr_elem::read");
 		// constructors
 		CppMethod nMethod = newClass.addConstructor(Vis.PUBLIC, className + "(uint64_t _m_startaddress, uint64_t _m_endaddress)");  
 		nMethod.addInitCall("ordt_addr_elem(_m_startaddress, _m_endaddress)");  
@@ -486,13 +626,23 @@ public class CppModBuilder extends OutputBuilder {
 		nMethod.addInitCall("ordt_addr_elem(_old)");  
 		nMethod.addInitCall("m_mutex()");  
 		// write methods
-		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void write(const ordt_data &wdata)");  // will be overriden by child classes
-		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int write(const uint64_t &addr, const ordt_data &wdata)");
+		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void write(const ordt_data &wdata)");
+                nMethod.addStatement("bool return_now = pre_write(m_startaddress, wdata);");
+                nMethod.addStatement("if (return_now) return;");
+                nMethod.addStatement("set(wdata);");
+                nMethod.addStatement("post_write(m_startaddress, wdata);");
+		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int write_body(const uint64_t &addr, const ordt_data &wdata)");
 		nMethod.addStatement("   return 0;" );
+                newClass.addMethod(Vis.PUBLIC, "virtual void set(const ordt_data &wdata)"); // will be overriden by child classes
 		// read methods
-		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void read(ordt_data &rdata)");  // will be overriden by child classes
-		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int read(const uint64_t &addr, ordt_data &rdata)");  
+		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void read(ordt_data &rdata)");
+                nMethod.addStatement("bool return_now = pre_read(m_startaddress);");
+                nMethod.addStatement("if (return_now) return;");
+                nMethod.addStatement("get(rdata);");
+                nMethod.addStatement("post_read(m_startaddress);");
+		nMethod = newClass.addMethod(Vis.PUBLIC, "virtual int read_body(const uint64_t &addr, ordt_data &rdata)");  
 		nMethod.addStatement("   return 0;" );
+                newClass.addMethod(Vis.PUBLIC, "virtual void get(ordt_data &rdata)"); // will be overriden by child classes
 		// write class
 		writeStmts(hppBw, newClass.genHeader(false)); // header with no include guards
 		writeStmts(cppBw, newClass.genMethods(true));  // methods with namespace
@@ -513,8 +663,11 @@ public class CppModBuilder extends OutputBuilder {
 		writeStmt(hppBw, 0, "    ordt_field(int _lobit, int _size, int _vsize, uint32_t _data, ordt_read_mode_t _r_mode, ordt_write_mode_t _w_mode);"); // special case for wide fields
 		writeStmt(hppBw, 0, "    ordt_field(int _lobit, int _size, T _init_data, ordt_read_mode_t _r_mode, ordt_write_mode_t _w_mode);");
 		// read/write 
-		writeStmt(hppBw, 0, "    void write(const ordt_data &wdata);");
-		writeStmt(hppBw, 0, "    void read(ordt_data &rdata);");
+		writeStmt(hppBw, 0, "    void write(const ordt_data &wdata) { set(wdata); }");
+		writeStmt(hppBw, 0, "    void read(ordt_data &rdata) { get(rdata); }");
+		// get/set
+		writeStmt(hppBw, 0, "    void set(const ordt_data &wdata);");
+		writeStmt(hppBw, 0, "    void get(ordt_data &rdata);");
 		// clear 
 		//writeStmt(hppBw, 0, "    void clear(ordt_data &data);");
 		writeStmt(hppBw, 0, "    void clear();");
@@ -533,7 +686,7 @@ public class CppModBuilder extends OutputBuilder {
 		writeStmt(hppBw, 0, "");
 		// read/write
 		writeStmt(hppBw, 0, "template<typename T>");
-		writeStmt(hppBw, 0, "void ordt_field<T>::write(const ordt_data &wdata) {");
+		writeStmt(hppBw, 0, "void ordt_field<T>::set(const ordt_data &wdata) {");
 		//writeStmt(hppBw, 0, "   std::cout << \"field write: \" << \", mode=\" << w_mode << \"\\n\";");
 		writeStmt(hppBw, 0, "   if (w_mode == w_std) wdata.get_slice(lobit, size, data);");
 		writeStmt(hppBw, 0, "   else if (w_mode == w_1set) {");
@@ -549,7 +702,7 @@ public class CppModBuilder extends OutputBuilder {
 		writeStmt(hppBw, 0, "}");
 		writeStmt(hppBw, 0, "");
 		writeStmt(hppBw, 0, "template<typename T>");
-		writeStmt(hppBw, 0, "void ordt_field<T>::read(ordt_data &rdata) {");
+		writeStmt(hppBw, 0, "void ordt_field<T>::get(ordt_data &rdata) {");
 		//writeStmt(hppBw, 0, "   std::cout << \"field read: \" << \"\\n\";");
 		writeStmt(hppBw, 0, "   rdata.set_slice(lobit, size, data);");
 		writeStmt(hppBw, 0, "   if (r_mode == r_clr) clear();");
