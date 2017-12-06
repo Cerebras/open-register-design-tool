@@ -277,6 +277,10 @@ public class CppModBuilder extends OutputBuilder {
     		writeStmt(cppBw, 0, "#include \"ordt_pio_common.hpp\"");
     		writeStmt(cppBw, 0, "#include \"ordt_pio.hpp\"");
     		writeStmt(cppBw, 0, "");
+                writeStmt(hppBw, 0, "#ifdef ORDT_NAMESPACE");
+                writeStmt(hppBw, 0, "using namespace ORDT_NAMESPACE;");
+                writeStmt(hppBw, 0, "#endif");
+    		writeStmt(cppBw, 0, "");
     		
     		// define r/w modes
     		writeStmt(hppBw, 0, "enum ordt_read_mode_t : uint8_t {r_none, r_std, r_clr};");
