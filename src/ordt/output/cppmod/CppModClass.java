@@ -136,6 +136,11 @@ public class CppModClass extends CppBaseModClass {
 	   newClass.tagMethod("get", nMethod);  // tag this method so field info can be appended
 	   nMethod.addStatement("rdata.clear();");
 	   nMethod.addStatement("for (uint64_t widx=0; widx<((m_endaddress - m_startaddress + 1)/4); widx++) rdata.push_back(0);");
+           
+           // reset method
+           nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void reset()");
+	   newClass.tagMethod("reset", nMethod);  // tag this method so field info can be appended
+
 	   return newClass;
    }
 
@@ -196,6 +201,8 @@ public class CppModClass extends CppBaseModClass {
 	   get.addStatement(instName + ".get(rdata);");
 	   CppMethod set = this.getTaggedMethod("set");
 	   set.addStatement(instName + ".set(wdata);");
+           CppMethod reset = this.getTaggedMethod("reset");
+           reset.addStatement(instName + ".reset();");
    }
 
 }

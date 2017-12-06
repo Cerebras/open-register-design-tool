@@ -443,6 +443,7 @@ public class CppModBuilder extends OutputBuilder {
                 nMethod.addStatement("m_pre_read_cbs.push_back(cb);");
                 nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void register_post_read_cb(const ordt_read_cb_t &cb)");
                 nMethod.addStatement("m_post_read_cbs.push_back(cb);");
+                nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void reset()");
                 nMethod = newClass.addMethod(Vis.PRIVATE, "bool interpret_cb_result(const ordt_cb_result_t cb_result)");
                 nMethod.addStatement("bool return_now = false;");
                 nMethod.addStatement("switch(cb_result) {");
@@ -540,6 +541,11 @@ public class CppModBuilder extends OutputBuilder {
 		nMethod.addStatement("   rdata.clear();");
 		nMethod.addStatement("   return 8;" );
         
+                nMethod = newClass.addMethod(Vis.PUBLIC, "virtual void reset()");
+                nMethod.addStatement("   for (auto &child : m_children) {");
+                nMethod.addStatement("      child->reset();");
+                nMethod.addStatement("   }");
+
 		// write class
 		writeStmts(hppBw, newClass.genHeader(false)); // header with no include guards
 		writeStmts(cppBw, newClass.genMethods(true));  // methods with namespace
@@ -552,12 +558,12 @@ public class CppModBuilder extends OutputBuilder {
 		writeStmt(hppBw, 0, "template<typename T>");
 		writeStmt(hppBw, 0, "class ordt_addr_elem_array : public std::vector<T>, public ordt_addr_elem {");  // mult inheritance ordt_array_elem??
 		writeStmt(hppBw, 0, "  protected:");
-		writeStmt(hppBw, 0, "    std::vector<T> vec;");  
 		writeStmt(hppBw, 0, "    uint64_t m_stride;");  
 		writeStmt(hppBw, 0, "    virtual int write_body(const uint64_t &addr, const ordt_data &wdata);");
 		writeStmt(hppBw, 0, "    virtual int read_body(const uint64_t &addr, ordt_data &rdata);");
 		writeStmt(hppBw, 0, "  public:");
 		writeStmt(hppBw, 0, "    ordt_addr_elem_array(uint64_t _m_startaddress, uint64_t _m_endaddress, int _reps, uint64_t _m_stride);");
+                writeStmt(hppBw, 0, "    virtual void reset();");
 		writeStmt(hppBw, 0, "};");
 		writeStmt(hppBw, 0, "");
 
@@ -605,6 +611,14 @@ public class CppModBuilder extends OutputBuilder {
 		writeStmt(hppBw, 0, "#endif");
 		writeStmt(hppBw, 0, "   rdata.clear();");
 		writeStmt(hppBw, 0, "   return 8;" );
+		writeStmt(hppBw, 0, "}");
+		writeStmt(hppBw, 0, "");
+
+                writeStmt(hppBw, 0, "template<typename T>");
+                writeStmt(hppBw, 0, "void ordt_addr_elem_array<T>::reset() {");
+                writeStmt(hppBw, 0, "   for (auto &child : *this) {");
+                writeStmt(hppBw, 0, "      child.reset();");
+                writeStmt(hppBw, 0, "   }");
 		writeStmt(hppBw, 0, "}");
 		writeStmt(hppBw, 0, "");
 	}
@@ -658,6 +672,7 @@ public class CppModBuilder extends OutputBuilder {
 		writeStmt(hppBw, 0, "    int lobit, size;");
 		writeStmt(hppBw, 0, "    T data;");
 		//writeStmt(hppBw, 0, "    std::atomic<T> data;");  // wrap data in atomic
+                writeStmt(hppBw, 0, "    T reset_value;");
 		writeStmt(hppBw, 0, "    ordt_read_mode_t r_mode;");
 		writeStmt(hppBw, 0, "    ordt_write_mode_t w_mode;");
 		writeStmt(hppBw, 0, "    ordt_field(int _lobit, int _size, int _vsize, uint32_t _data, ordt_read_mode_t _r_mode, ordt_write_mode_t _w_mode);"); // special case for wide fields
@@ -671,17 +686,18 @@ public class CppModBuilder extends OutputBuilder {
 		// clear 
 		//writeStmt(hppBw, 0, "    void clear(ordt_data &data);");
 		writeStmt(hppBw, 0, "    void clear();");
+		writeStmt(hppBw, 0, "    void reset();");
 		writeStmt(hppBw, 0, "};");
 		// constructors
 		writeStmt(hppBw, 0, "");
 		writeStmt(hppBw, 0, "template<typename T>");
 		writeStmt(hppBw, 0, "ordt_field<T>::ordt_field(int _lobit, int _size, int _vsize, uint32_t _data, ordt_read_mode_t _r_mode, ordt_write_mode_t _w_mode)");
-		writeStmt(hppBw, 0, "   : lobit(_lobit), size(_size), data(_vsize, _data), r_mode(_r_mode), w_mode(_w_mode) {");
+		writeStmt(hppBw, 0, "   : lobit(_lobit), size(_size), data(_vsize, _data), reset_value(_vsize, _data), r_mode(_r_mode), w_mode(_w_mode) {");
 		writeStmt(hppBw, 0, "}");
 		writeStmt(hppBw, 0, "");
 		writeStmt(hppBw, 0, "template<typename T>");
 		writeStmt(hppBw, 0, "ordt_field<T>::ordt_field(int _lobit, int _size, T _init_data, ordt_read_mode_t _r_mode, ordt_write_mode_t _w_mode)");
-		writeStmt(hppBw, 0, "   : lobit(_lobit), size(_size), data(_init_data), r_mode(_r_mode), w_mode(_w_mode) {");
+		writeStmt(hppBw, 0, "   : lobit(_lobit), size(_size), data(_init_data), reset_value(_init_data), r_mode(_r_mode), w_mode(_w_mode) {");
 		writeStmt(hppBw, 0, "}");
 		writeStmt(hppBw, 0, "");
 		// read/write
@@ -712,6 +728,12 @@ public class CppModBuilder extends OutputBuilder {
 		writeStmt(hppBw, 0, "template<typename T>");
 		writeStmt(hppBw, 0, "void ordt_field<T>::clear() {");
 		writeStmt(hppBw, 0, "    data = 0;");
+		writeStmt(hppBw, 0, "}");
+		// reset
+		writeStmt(hppBw, 0, "");
+		writeStmt(hppBw, 0, "template<typename T>");
+		writeStmt(hppBw, 0, "void ordt_field<T>::reset() {");
+		writeStmt(hppBw, 0, "    data = reset_value;");
 		writeStmt(hppBw, 0, "}");
 		writeStmt(hppBw, 0, "");
 	}
