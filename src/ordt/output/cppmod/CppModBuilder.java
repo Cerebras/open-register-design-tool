@@ -266,10 +266,10 @@ public class CppModBuilder extends OutputBuilder {
                 writeStmt(hppBw, 0, "#include <functional>"); // callback functions
                 writeStmt(hppBw, 0, "#include <list>");
                 writeStmt(hppBw, 0, "#define quote(x) #x");   // for debug display of vars
-    		writeStmt(hppBw, 0, "");		   
-                writeStmt(hppBw, 0, "#ifdef ORDT_NAMESPACE");
+    		writeStmt(hppBw, 0, "");
+                writeStmt(hppBw, 0, "#include \"ordt_pio_common.hpp\"");
+                writeStmt(hppBw, 0, "");
                 writeStmt(hppBw, 0, "namespace ORDT_NAMESPACE {");
-                writeStmt(hppBw, 0, "#endif");
     		writeStmt(hppBw, 0, "");		   
    		
     		// write the cpp file header
@@ -277,9 +277,7 @@ public class CppModBuilder extends OutputBuilder {
     		writeStmt(cppBw, 0, "#include \"ordt_pio_common.hpp\"");
     		writeStmt(cppBw, 0, "#include \"ordt_pio.hpp\"");
     		writeStmt(cppBw, 0, "");
-                writeStmt(cppBw, 0, "#ifdef ORDT_NAMESPACE");
                 writeStmt(cppBw, 0, "using namespace ORDT_NAMESPACE;");
-                writeStmt(cppBw, 0, "#endif");
     		writeStmt(cppBw, 0, "");
     		
     		// define r/w modes
@@ -310,9 +308,7 @@ public class CppModBuilder extends OutputBuilder {
     		writeClasses();
     		
                 // close up hpp file
-                writeStmt(hppBw, 0, "#ifdef ORDT_NAMESPACE");
-                writeStmt(hppBw, 0, "}");
-                writeStmt(hppBw, 0, "#endif");
+                writeStmt(hppBw, 0, "} // namespace");
                 
     		writeStmt(hppBw, 0, "#endif // __ORDT_PIO_HPP_INCLUDED__");
     		closeBufferedWriter(hppBw);
