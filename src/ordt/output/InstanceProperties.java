@@ -503,12 +503,12 @@ public class InstanceProperties {
 		result = prime * result + ((extInterfaceName == null) ? 0 : extInterfaceName.hashCode());
 		if (includeId) result = prime * result + ((id == null) ? 0 : id.hashCode());  // TODO - need to skip ID check
 		result = prime * result + ((instDefaultProperties == null) ? 0 : instDefaultProperties.hashCode());
-		result = prime * result + extractInstance.getRepCount();
+		result = prime * result + extractInstance.getRepCount().hashCode();
 		result = prime * result + ((textName == null) ? 0 : textName.hashCode());
 		result = prime * result + (useInterface ? 1231 : 1237);
 		result = prime * result + (useStruct ? 1231 : 1237);
 		result = prime * result + ((userDefinedProperties == null) ? 0 : userDefinedProperties.hashCode());
-		//System.out.println("instance hashCode for id=" + id + " is " + result);
+		//System.out.println("InstanceProperties.hashCode for id=" + id + " is " + result);
 		return result;
 	}
 	
@@ -551,7 +551,7 @@ public class InstanceProperties {
 				return false;
 		} else if (!instDefaultProperties.equals(other.instDefaultProperties))
 			return false;
-		if (extractInstance.getRepCount() != other.extractInstance.getRepCount())
+		if (extractInstance.getRepCount().intValue() != other.extractInstance.getRepCount().intValue())
 			return false;
 		if (textName == null) {
 			if (other.textName != null)
