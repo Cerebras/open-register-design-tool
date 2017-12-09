@@ -6,6 +6,7 @@ package ordt.output.cppmod;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Stack;
@@ -13,9 +14,12 @@ import java.util.Stack;
 import ordt.extract.RegModelIntf;
 import ordt.output.FieldProperties;
 import ordt.output.OutputBuilder;
+import ordt.output.RegProperties;
+import ordt.output.RegSetProperties;
 import ordt.output.drvmod.cpp.CppBaseModClass;
 import ordt.output.drvmod.cpp.CppBaseModClass.CppMethod;
 import ordt.output.drvmod.cpp.CppBaseModClass.Vis;
+import ordt.parameters.ExtParameters;
 
 public class CppModBuilder extends OutputBuilder {
 
@@ -27,6 +31,10 @@ public class CppModBuilder extends OutputBuilder {
 	private List<CppModClass> modClasses = new ArrayList<CppModClass>(); // ordered list of classes to be created
 	
 	private static HashSet<String> reservedWords = getReservedWords();
+
+	// unique C++ reg and block classes
+	protected HashMap<RegProperties, String> uniqueRegClasses = new HashMap<RegProperties, String>(); // hashmap since even equal RegProperties can have dif't instance paths 
+	protected HashMap<RegSetProperties, String> uniqueRegSetClasses = new HashMap<RegSetProperties, String>();  // hashmap since even equal RegSetProperties can have dif't instance paths
 	
     //---------------------------- constructor ----------------------------------
 
@@ -83,13 +91,31 @@ public class CppModBuilder extends OutputBuilder {
 		if (regProperties.isSwWriteable() || regProperties.isSwReadable()) {
 			// done with this regset so pop it and add to the output list
 			CppModClass currentModClass = activeModClasses.pop();
+
 			// dont add reg to output if prune is set
 			if (!regProperties.cppModPrune()) {
-				modClasses.add(currentModClass); 
-				//  add info for this reg to parent class 
-				activeModClasses.peek().addChildRegInfo(getCppRegClassName(), regProperties.getId(), 
-						regProperties.getRelativeBaseAddress(), regProperties.getRegByteWidth(), regProperties.getRepCount(), regProperties.getExtractInstance().getAddressIncrement());
-			}
+                                // add new reg if unique or reuse is disabled
+                                boolean addNewReg = true;
+                                String cppRegClassName = getCppRegClassName();
+                                if (ExtParameters.cppmodReuseCppClasses()) {
+                                        if (!uniqueRegClasses.containsKey(regProperties)) 
+                                                uniqueRegClasses.put(regProperties, cppRegClassName);
+                                        else {
+                                                // use existing reg class
+                                                cppRegClassName = uniqueRegClasses.get(regProperties);
+                                                addNewReg = false;
+                                        }
+                                }
+                                
+                                if (addNewReg) {
+                                        modClasses.add(currentModClass); 
+                                }
+                                //  add info for this reg to parent class 
+                                activeModClasses.peek().addChildRegInfo(
+                                        cppRegClassName, regProperties.getId(), 
+                                        regProperties.getRelativeBaseAddress(), regProperties.getRegByteWidth(), 
+                                        regProperties.getRepCount(), regProperties.getExtractInstance().getAddressIncrement());
+                        } 
 			//else
 			//  System.out.println("CppModBuilder finishRegister: pruned reg found, ipath=" + regProperties.getInstancePath() + ", id=" + regProperties.getId() + ", base=" + regProperties.getFullBaseAddress());
 		}
@@ -108,7 +134,6 @@ public class CppModBuilder extends OutputBuilder {
 		else
 		   newClass = CppModClass.createRegset(getCppRegsetClassName());
 		activeModClasses.push(newClass);
-
 	}
 
 	@Override
@@ -119,12 +144,30 @@ public class CppModBuilder extends OutputBuilder {
 		// if root, then update address range for constructor else add info for this regset to parent class 
 		if (activeModClasses.isEmpty()) {
 		    modClasses.add(currentModClass);
-			currentModClass.addRootInitCall(getCppRegsetClassName(), regSetProperties.getFullBaseAddress(), regSetProperties.getFullHighAddress());
+		    currentModClass.addRootInitCall(getCppRegsetClassName(), regSetProperties.getFullBaseAddress(), regSetProperties.getFullHighAddress());
 		}
 		else if (currentModClass.hasChildren()) {  // only add regset if it contains some regs
-		    modClasses.add(currentModClass);
-			activeModClasses.peek().addChildRegsetInfo(getCppRegsetClassName(), regSetProperties.getId(), 
-					regSetProperties.getRelativeBaseAddress(), regSetProperties.getAlignedSize(), regSetProperties.getRepCount(), regSetProperties.getExtractInstance().getAddressIncrement());			
+                        boolean addNewRegSet = true;
+                        String cppRegSetClassName = getCppRegsetClassName();
+                        if (ExtParameters.cppmodReuseCppClasses()) {
+                                if (!uniqueRegSetClasses.containsKey(regSetProperties)) 
+                                        uniqueRegSetClasses.put(regSetProperties, cppRegSetClassName);
+				else {
+                                        // use existing regset class
+					cppRegSetClassName = uniqueRegSetClasses.get(regSetProperties);
+                                        addNewRegSet = false;
+				}
+                        }
+                        
+                        if (addNewRegSet) {
+                                modClasses.add(currentModClass);
+                        }
+                        // add info for this regset to parent class
+                        activeModClasses.peek().addChildRegsetInfo(
+                                cppRegSetClassName,
+                                regSetProperties.getId(), 
+                                regSetProperties.getRelativeBaseAddress(), regSetProperties.getAlignedSize(),
+                                regSetProperties.getRepCount(), regSetProperties.getExtractInstance().getAddressIncrement());
 		}
 		//System.out.println("CppModBuilder finishRegSet: root found, ipath=" + regSetProperties.getBaseName() + ", id=" + regSetProperties.getId() + ", base=" + regSetProperties.getFullBaseAddress() + ", high=" + regSetProperties.getFullHighAddress());
 	}
@@ -146,14 +189,28 @@ public class CppModBuilder extends OutputBuilder {
 
 	/** get c++ class name for a regset from hierarchy name */
 	private String getCppRegsetClassName() {
-		String baseName = regSetProperties.getBaseName();
+		String baseName;
+                if (ExtParameters.cppmodCppClassName().equals("type"))
+                        // EXPERIMENTAL:
+                        //   This doesn't work, because different classes (based on hash of regProperties)
+                        //   sometimes end up with the same class name.
+                        baseName = regSetProperties.getExtractInstance().getRegComp().getFullId().replace('.', '_');
+                else // "instance"
+                        baseName = regSetProperties.getBaseName();
 		String className = ((baseName == null) || (baseName.isEmpty()))? "ordt_root" : "ordt_rset_" + baseName;
 		return className;
 	}
 
 	/** get c++ class name for a reg from hierarchy name */
 	private String getCppRegClassName() {
-		String baseName = regProperties.getBaseName();
+                String baseName;
+                if (ExtParameters.cppmodCppClassName().equals("type"))
+                        // EXPERIMENTAL:
+                        //   This doesn't work, because different classes (based on hash of regProperties)
+                        //   sometimes end up with the same class name.
+                        baseName = regProperties.getExtractInstance().getRegComp().getFullId().replace('.', '_');
+                else // "instance"
+                        baseName = regProperties.getBaseName();
 		String className = "ordt_rg_" + baseName;
 		return className;
 	}

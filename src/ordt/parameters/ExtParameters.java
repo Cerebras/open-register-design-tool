@@ -48,7 +48,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 	public enum SVDecodeInterfaceTypes { NONE, LEAF, SERIAL8, RING8, RING16, RING32, PARALLEL, ENGINE1} 
 	public enum SVChildInfoModes { PERL, MODULE } 
 	public enum UVMModelModes { HEAVY, LITE1, TRANSLATE1 } 
-	
+
 	// non-standard typed parameters
 	private static SVDecodeInterfaceTypes sysVerRootDecoderInterface;
 	private static SVDecodeInterfaceTypes sysVerSecondaryDecoderInterface;
@@ -183,6 +183,10 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		
 		// ---- xml output defaults
 		initBooleanParameter("include_field_hw_info", true);
+
+		// ---- cppmod output defaults
+		initBooleanParameter("reuse_cpp_classes", false);
+		initStringParameter("cpp_class_name", "instance");
 	}
 	
 	static void initBooleanParameter(String name, Boolean value) {
@@ -404,6 +408,13 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		assignParameter(ctx.getChild(0).getText(), ctx.getChild(2).getText());		
 	}
 
+	/**
+	 * Assign cppmod output parameters
+	 */
+	@Override public void enterCppmod_out_parm_assign(@NotNull ExtParmsParser.Cppmod_out_parm_assignContext ctx) {
+		assignParameter(ctx.getChild(0).getText(), ctx.getChild(2).getText());		
+	}
+	
 	/**
 	 * Capture annotation command  
 		 annotation_command
@@ -917,6 +928,16 @@ public class ExtParameters extends ExtParmsBaseListener  {
 	
 	public static Boolean xmlIncludeFieldHwInfo() {
 		return getBooleanParameter("include_field_hw_info");
+	}
+	
+	// cppmod getters/setters
+
+	public static Boolean cppmodReuseCppClasses() {
+		return getBooleanParameter("reuse_cpp_classes");
+	}
+
+	public static String cppmodCppClassName() {
+		return getStringParameter("cpp_class_name");
 	}
 	
 	/**

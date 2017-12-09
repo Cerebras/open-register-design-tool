@@ -24,7 +24,7 @@ ext_parm_defs
     | reglist_out_defs
     | bench_out_defs
     | xml_out_defs
- //   | cppmod_out_defs
+    | cppmod_out_defs
     | model_annotation
     )*
   ;
@@ -227,21 +227,23 @@ ext_parm_defs
    : 'include_field_hw_info' EQ bool 
    ;
    
-/*   
 // ------------ cppmod_out_defs
  cppmod_out_defs
    : 'output' 'cppmod'
      LBRACE
-     (cppmod_out_parm_assign)+
+     (cppmod_out_parm_assign)*
      RBRACE
    ;  
    
  cppmod_out_parm_assign
-   : 'set_no_model' EQ STR
+   : 'reuse_cpp_classes' EQ bool
+   | 'cpp_class_name' EQ STR
+/*
+   | 'set_no_model' EQ STR
    | 'set_lite_model' EQ STR
    | 'set_full_model' EQ STR
-   ;
 */
+   ;
 
 // ------------ model_annotation
  model_annotation
