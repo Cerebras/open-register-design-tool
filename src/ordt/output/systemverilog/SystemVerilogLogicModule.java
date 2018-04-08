@@ -3,6 +3,7 @@
  */
 package ordt.output.systemverilog;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
@@ -14,6 +15,7 @@ import ordt.output.FieldProperties;
 import ordt.output.RhsReference;
 import ordt.output.SignalProperties;
 import ordt.output.systemverilog.SystemVerilogDefinedSignals.DefSignalType;
+import ordt.output.systemverilog.common.SystemVerilogCoverGroups;
 import ordt.output.systemverilog.common.SystemVerilogModule;
 import ordt.output.systemverilog.common.SystemVerilogSignal;
 import ordt.output.systemverilog.io.SystemVerilogIOSignalList;
@@ -48,6 +50,8 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 	private FieldProperties fieldProperties;
 	private RegProperties regProperties;
 	protected SystemVerilogBuilder builder;  // builder creating this module
+	
+	protected List<IntrDiagInfo> intrInfoList = new ArrayList<IntrDiagInfo>();  // saved list of interrupt signal info for diagnostic module gen
 	
 	public SystemVerilogLogicModule(SystemVerilogBuilder builder, int insideLocs, String defaultClkName) {
 		super(builder, insideLocs, defaultClkName, builder.getDefaultReset());
@@ -350,6 +354,9 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 		   String fieldRegisterNextName = fieldProperties.getFullSignalName(DefSignalType.FIELD_NEXT);  //"reg_" + hwBaseName + "_next";
 		   int fieldWidth = fieldProperties.getFieldWidth();
 		   
+		   // always create intr diag info (only save if a leaf intr)
+		   IntrDiagInfo intrInfo = new IntrDiagInfo(fieldRegisterName, fieldWidth, fieldProperties.getInstancePath());
+		   
 		   // if register is not already interrupt, then create signal assigns and mark for output creation in finishRegister
 		   String intrOutput = regProperties.getFullSignalName(DefSignalType.L2H_INTR);
 		   String intrClear = regProperties.getFullSignalName(DefSignalType.INTR_CLEAR);  // interrupt clear detect signal
@@ -383,7 +390,8 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 		   // otherwise, if next property isn't set then add an intr input
 		   else if (!fieldProperties.hasRef(RhsRefType.NEXT)) {
 			   addHwVector(DefSignalType.H2L_INTR, 0, fieldProperties.getFieldWidth());   // add hw interrupt input
-			   addVectorWire(hwToLogicIntrName, 0, fieldProperties.getFieldWidth());			   
+			   addVectorWire(hwToLogicIntrName, 0, fieldProperties.getFieldWidth());
+			   intrInfoList.add(intrInfo);  // this is a leaf interrupt, so add to diagnostic list
 		   }
 
 		   // if next is assigned then skip all the intr-specific next generation
@@ -396,11 +404,13 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 				   String refName = resolveRhsExpression(RhsRefType.INTR_ENABLE);
 				   if (fieldProperties.isMaskIntrBits()) intrBitModifier = " & " + refName;
 				   else intrOutputModifier = " & " + refName;
+				   intrInfo.setIntrEnableInfo(true, refName);  // save signal in diag info
 			   }
 			   else if (fieldProperties.hasRef(RhsRefType.INTR_MASK)) {
 				   String refName = resolveRhsExpression(RhsRefType.INTR_MASK);
 				   if (fieldProperties.isMaskIntrBits()) intrBitModifier = " & ~" + refName;
 				   else intrOutputModifier = " & ~" + refName;
+				   intrInfo.setIntrEnableInfo(false, refName);  // save signal in diag info
 			   }
 			   
 			   // create intr detect based on intrType (level, posedge, negedge, bothedge)
@@ -448,10 +458,12 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 		   if (fieldProperties.hasRef(RhsRefType.HALT_ENABLE)) {
 			   String refName = resolveRhsExpression(RhsRefType.HALT_ENABLE);
 		       addPrecCombinAssign(regProperties.getBaseName(), hwPrecedence, haltOutput + " = " + haltOutput  + orStr + fieldRegisterName + " & " + refName + endStr);
+			   intrInfo.setIntrHaltInfo(true, refName);  // save signal in diag info
 		   }
 		   else if (fieldProperties.hasRef(RhsRefType.HALT_MASK)) {
 			   String refName = resolveRhsExpression(RhsRefType.HALT_MASK);
 		       addPrecCombinAssign(regProperties.getBaseName(), hwPrecedence, haltOutput + " = " + haltOutput  + orStr + fieldRegisterName + " & ~" + refName + endStr);
+			   intrInfo.setIntrHaltInfo(false, refName);  // save signal in diag info
 		   }
 		   else if (fieldProperties.isHalt())
 		       addPrecCombinAssign(regProperties.getBaseName(), hwPrecedence, haltOutput + " = " + haltOutput + orStr + fieldRegisterName + endStr);
@@ -485,7 +497,8 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 		   
 		   // if an incr is specified
 		   if (fieldProperties.isIncrCounter()) {
-			   
+			   //if (fieldProperties.getInstancePath().contains("reg4")) System.out.println("SystemVerilogBuilder genCounterWriteStmts: " + fieldProperties.getInstancePath() + " is an incr counter");
+
 			   // add overflow output
 			   if (fieldProperties.hasOverflow()) {
 				   addHwScalar(DefSignalType.L2H_OVERFLOW);   // add hw overflow output
@@ -723,8 +736,7 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 			   addHwScalar(DefSignalType.L2H_XORED);    // logic to hw list 
 			   addScalarReg(logicToHwXoredName);  // add outputs to define list since we'll use block assign
 			   addCombinAssign(regProperties.getBaseName(), logicToHwXoredName + " = ^ " + fieldRegisterName + ";");  			   
-		   }
-		
+		   }	
 	}
 
 	/** generate alias register field read statements */  
@@ -740,8 +752,7 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 		   // if sw readable, set output (else return 0s)
 		   if (fieldProperties.isSwReadable()) {
 			   builder.addToTempAssignList(regProperties.getFullSignalName(DefSignalType.L2D_DATA) + fieldArrayString + " = " + fieldRegisterName + ";"); // need to set unused bits to 0 after all fields added		
-		   }
-		   
+		   }   
 	}
 
 	// -------------- user defined signal methods
@@ -859,7 +870,7 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 			// add coverage on input intr signal (if it exists)
 			if (!fieldProperties.hasRef(RhsRefType.INTR) && !fieldProperties.hasRef(RhsRefType.NEXT)) {
 				String intrName = fieldProperties.getFullSignalName(DefSignalType.H2L_INTR);
-				this.addCoverPoint("interrupt_cg", intrName, intrName, null);
+				this.addCoverPoint("interrupt_cg", intrName, intrName, fieldProperties.getFieldWidth(), null);
 			}			
 		}
 		// if a counter field, cover incr/decr signals, rollover/saturate, threshold
@@ -867,24 +878,183 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 			// add coverage on input incr signal (if it exists)
 			if (fieldProperties.isIncrCounter() && !fieldProperties.hasRef(RhsRefType.INCR)) {
 				String incrName = fieldProperties.getFullSignalName(DefSignalType.H2L_INCR);
-				this.addCoverPoint("counter_cg", incrName, incrName, null);
+				this.addCoverPoint("counter_cg", incrName, incrName, 1, null);
 			}			
 			// add coverage on input decr signal (if it exists)
 			if (fieldProperties.isDecrCounter() && !fieldProperties.hasRef(RhsRefType.DECR)) {
 				String decrName = fieldProperties.getFullSignalName(DefSignalType.H2L_DECR);
-				this.addCoverPoint("counter_cg", decrName, decrName, null);
+				this.addCoverPoint("counter_cg", decrName, decrName, 1, null);
 			}			
 			// TODO - add rollover / saturate test?
 		}
 		// otherwise if rtl_coverage is explicitly specified
 		else if (fieldProperties.generateRtlCoverage()) {
 			String fldReg = fieldProperties.getFullSignalName(DefSignalType.FIELD);
-			this.addCoverPoint("field_cg", fldReg, fldReg, null);
+			this.addCoverPoint("field_cg", fldReg, fldReg, fieldProperties.getFieldWidth(), null);
 		}
 		
 	}
 	
+	//---------------------------- interrupt diagnostic bind module ----------------------------------------
+
+	/** create an interrupt assertion bind module */
+	public SystemVerilogModule createIntrBindModule() {
+		SystemVerilogModule intrBindMod = new SystemVerilogModule(builder, getInsideLocs(), defaultClkName, builder.getDefaultReset());
+		String intrBindModName = getName() + "_intr_bind";
+		intrBindMod.setName(intrBindModName);
+		Integer defaultOutputLoc = getOutsideLocs();
+		SystemVerilogIOSignalList bindIOList = new SystemVerilogIOSignalList("default");
+		intrBindMod.useIOList(bindIOList, defaultOutputLoc);
+		// add default clock and reset
+		intrBindMod.addSimpleScalarFrom(defaultOutputLoc, defaultClkName);
+		intrBindMod.addSimpleScalarFrom(defaultOutputLoc, builder.getDefaultReset());
+		// add control signal defines
+		String pkgPrefix = "";
+		if (ExtParameters.sysVerUseGlobalDvBindControls()) {
+			intrBindMod.addStatement("//------- intr detect controls are set in global package ordt_dv_bind_controls");
+			intrBindMod.addStatement("//------- which includes the following for intr control:");
+			intrBindMod.addStatement("//package ordt_dv_bind_controls;");
+			intrBindMod.addStatement("//   bit enable_intr_check; // if 1 shut down all intr assertions");
+			intrBindMod.addStatement("//   bit allow_intr;        // if 1 intr will be flagged as warning, not error");
+			intrBindMod.addStatement("//endpackage");
+			intrBindMod.addStatement("//ordt_dv_bind_controls::enable_intr_check = 1'b1; // if 1 shut down all intr assertions");
+			intrBindMod.addStatement("//ordt_dv_bind_controls::allow_intr = 1'b1;        // if 1 intr will be flagged as warning, not error");
+			pkgPrefix = "ordt_dv_bind_controls::";
+		}
+		else {
+			intrBindMod.addStatement("//------- intr detect controls");
+			intrBindMod.addStatement("bit enable_intr_check = 1'b1; // if 1 shut down all intr assertions");
+			intrBindMod.addStatement("bit allow_intr = 1'b1;        // if 1 intr will be flagged as warning, not error");
+		}
+		// add property define
+		intrBindMod.addStatement("");
+		intrBindMod.addStatement("//------- intr detect property");
+		intrBindMod.addStatement("property no_rising_intr (sig);");
+		intrBindMod.addStatement("  @(posedge "+ defaultClkName + ")");
+		intrBindMod.addStatement("  disable iff (!" + pkgPrefix + "enable_intr_check || "+ builder.getDefaultReset() + ")");
+		intrBindMod.addStatement("    not $rose(sig);");
+		intrBindMod.addStatement("endproperty : no_rising_intr");	
+		// add all leaf interrupts to to monitored
+		intrBindMod.addStatement("");
+		intrBindMod.addStatement("//------- intr detect assertions");
+		intrBindMod.setShowDuplicateSignalErrors(false);  // could be leaf interrupts being used as masks/enables
+		for(IntrDiagInfo intrInfo: intrInfoList) {
+			// add signal inputs
+			intrBindMod.addSimpleVectorFrom(defaultOutputLoc, intrInfo.getSigName(), 0, intrInfo.getWidth());
+			if (intrInfo.hasIntrEnableOrMask()) intrBindMod.addSimpleVectorFrom(defaultOutputLoc, intrInfo.getIntrEnableName(), 0, intrInfo.getWidth());
+			if (intrInfo.hasHaltEnableOrMask()) intrBindMod.addSimpleVectorFrom(defaultOutputLoc, intrInfo.getHaltEnableName(), 0, intrInfo.getWidth());
+			// add assertions 
+			String inSigName = intrInfo.isVector()? "|" + intrInfo.getSigName() : intrInfo.getSigName(); // use or reduction on vectors
+			String assertName = intrInfo.getSigName() + "_intr_assert";
+			String assertMessage = "Interrupt " + intrInfo.getSigPath() + " fired. Value = %h.";
+			String assertMessageParms = intrInfo.getSigName();
+			if (intrInfo.hasIntrEnableOrMask()) { // if intr has an intr enable/mask, display its value
+				assertMessage += " " + intrInfo.getIntrEnableType() + " value = %h.";
+				assertMessageParms += ", " + intrInfo.getIntrEnableName();
+			}
+			if (intrInfo.hasHaltEnableOrMask()) { // if intr has a halt/poll enable/mask, display its value
+				assertMessage += " Halt(poll) " + intrInfo.getHaltEnableType().toLowerCase() + " value = %h.";
+				assertMessageParms += ", " + intrInfo.getHaltEnableName();
+			}
+			intrBindMod.addStatement(assertName.toUpperCase() + " : assert property (no_rising_intr("+ inSigName + "))");
+			intrBindMod.addStatement("else if (!" + pkgPrefix + "allow_intr) $error(\""+ assertMessage + "\", "+ assertMessageParms + ");");
+			intrBindMod.addStatement("else $warning(\""+ assertMessage + "\", "+ assertMessageParms + ");");
+		}
+		// print a usage message
+		intrBindMod.addStatement("");
+		intrBindMod.addStatement("//------- " + intrBindModName + " interrupt debug module.  Use by binding as follows in tb:");
+		intrBindMod.addStatement("//        bind " + getName() + " " + intrBindModName + " intr_bind_inst(.*);");
+		// return the module
+		return intrBindMod;
+	}
+
+	public SystemVerilogModule createCoverBindModule() {
+		SystemVerilogModule coverBindMod = new SystemVerilogModule(builder, getInsideLocs(), defaultClkName, builder.getDefaultReset());
+		String bindModName = getName() + "_cover_bind";
+		coverBindMod.setName(bindModName);
+		Integer defaultOutputLoc = getOutsideLocs();
+		SystemVerilogIOSignalList bindIOList = new SystemVerilogIOSignalList("default");
+		coverBindMod.useIOList(bindIOList, defaultOutputLoc);
+		// add default clock and reset
+		coverBindMod.addSimpleScalarFrom(defaultOutputLoc, defaultClkName);
+		coverBindMod.addSimpleScalarFrom(defaultOutputLoc, builder.getDefaultReset());
+		// use defined coverage info in the logic module
+		SystemVerilogCoverGroups definedCGs = getCoverGroups();
+		if (definedCGs.isEmpty()) return null;  // exit if no CGs
+		coverBindMod.setCoverGroups(definedCGs);
+		// add control signal defines  TODO
+		
+		// add bind module inputs
+		for(SystemVerilogSignal sig: definedCGs.getSignalList()) {
+			// add signal inputs
+			coverBindMod.addSimpleVectorFrom(defaultOutputLoc, sig.getName(), sig.getLowIndex(), sig.getSize());
+		}
+		// print a usage message
+		coverBindMod.addStatement("");
+		coverBindMod.addStatement("//------- " + bindModName + " coverage module.  Use by binding as follows in tb:");
+		coverBindMod.addStatement("//        bind " + getName() + " " + bindModName + " cover_bind_inst(.*);");
+		// return the module
+		return coverBindMod;
+	}
+
 	//---------------------------- inner classes ----------------------------------------
+	
+	/** class to hold interrupt bind info */
+	private class IntrDiagInfo {
+		private String sigName;  // intr field register name
+		private int width = 1;  // size in bits
+		private String sigPath;  // path of this instance
+		private String intrEnableName; // enable/mask name
+		private boolean intrEnable = true;  // true is enable, false if mask
+		private String haltEnableName; // enable/mask name
+		private boolean haltEnable = true;  // true is enable, false if mask
+		
+		IntrDiagInfo(String sigName, int width, String sigPath) {
+			this.sigName = sigName;
+			this.width = width;
+			this.sigPath = sigPath;
+		}
+		protected String getIntrEnableName() {
+			return intrEnableName;
+		}
+		public void setIntrEnableInfo(boolean intrEnable, String intrEnableName) {
+			this.intrEnable = intrEnable;
+			this.intrEnableName = intrEnableName;
+		}
+		protected boolean hasIntrEnableOrMask() {
+			return intrEnableName != null;
+		}
+		protected String getIntrEnableType() {
+			return intrEnable? "Enable" : "Mask";
+		}
+		
+		protected String getHaltEnableName() {
+			return haltEnableName;
+		}
+		public void setIntrHaltInfo(boolean haltEnable, String haltEnableName) {
+			this.haltEnable = haltEnable;
+			this.haltEnableName = haltEnableName;
+		}
+		protected boolean hasHaltEnableOrMask() {
+			return haltEnableName != null;
+		}
+		protected String getHaltEnableType() {
+			return haltEnable? "enable" : "mask";
+		}
+
+		protected String getSigName() {
+			return sigName;
+		}
+		protected int getWidth() {
+			return width;
+		}
+		protected boolean isVector() {
+			return width>1;
+		}
+		protected String getSigPath() {
+			return sigPath;
+		}
+	}
 	
 	/** class to hold rhs assignment info for performing sig checks once all instances have been added to builder */
 	private class RhsReferenceInfo {

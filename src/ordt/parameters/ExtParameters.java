@@ -27,6 +27,7 @@ import ordt.extract.model.ModComponent.CompType;
 import ordt.output.systemverilog.common.wrap.WrapperRemapInvertXform;
 import ordt.output.systemverilog.common.wrap.WrapperRemapSyncStagesXform;
 import ordt.output.systemverilog.common.wrap.WrapperRemapXform;
+import ordt.output.uvmregs.UVMRegsBuilder.UvmMemStrategy;
 import ordt.extract.model.ModRegister;
 import ordt.parse.parameters.ExtParmsBaseListener;
 import ordt.parse.parameters.ExtParmsLexer;
@@ -45,17 +46,17 @@ public class ExtParameters extends ExtParmsBaseListener  {
 	
 	// enums for non-standard parameter types
 	public enum SVBlockSelectModes { INTERNAL, EXTERNAL, ALWAYS } 
-	public enum SVDecodeInterfaceTypes { NONE, LEAF, SERIAL8, RING8, RING16, RING32, PARALLEL, ENGINE1} 
+	public enum SVDecodeInterfaceTypes { NONE, LEAF, SERIAL8, RING8, RING16, RING32, PARALLEL, PARALLEL_PULSED, ENGINE1} 
 	public enum SVChildInfoModes { PERL, MODULE } 
-	public enum UVMModelModes { HEAVY, LITE1, TRANSLATE1 } 
-
+	public enum UVMModelModes { HEAVY, LITE1 } 
+	
 	// non-standard typed parameters
 	private static SVDecodeInterfaceTypes sysVerRootDecoderInterface;
 	private static SVDecodeInterfaceTypes sysVerSecondaryDecoderInterface;
 	private static SVBlockSelectModes systemverilogBlockSelectMode;  
 	private static SVChildInfoModes sysVerChildInfoMode;  
 	private static UVMModelModes uvmModelMode;  
-
+	private static UvmMemStrategy uvmMemStrategy;
 	private static int defaultMaxInternalRegReps = 4096;  // max internal reg reps allowed
 	
 	// list of model annotation commands
@@ -144,6 +145,10 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		initBooleanParameter("nack_partial_writes", false); 
 		initIntegerParameter("write_enable_size", 0); 	
 		initIntegerParameter("max_internal_reg_reps", defaultMaxInternalRegReps); 	
+		initBooleanParameter("separate_iwrap_encap_files", false); 
+		initBooleanParameter("generate_dv_bind_modules", false); 
+		initBooleanParameter("use_global_dv_bind_controls", false); 
+		initBooleanParameter("include_addr_monitor", false); 
 		
 		// ---- rdl output defaults
 		initBooleanParameter("root_component_is_instanced", true); 
@@ -157,6 +162,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		initStringParameter("root_instance_name", null);
 		initIntegerParameter("root_instance_repeat", 1);
 		initBooleanParameter("add_user_param_defines", false); 
+		initBooleanParameter("keep_fset_hierarchy", false); 
 		
 		// ---- reglist output defaults
 		initBooleanParameter("display_external_regs", true); 
@@ -172,9 +178,9 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		initBooleanParameter("reuse_uvm_classes", false); 
 		initBooleanParameter("skip_no_reset_db_update", true); 
 		uvmModelMode = UVMModelModes.HEAVY; 
-		initStringMapParameter("uvm_model_parameters", new HashMap<String, String>()); 
 		initBooleanParameter("regs_use_factory", false); 
-		
+		initBooleanParameter("use_numeric_uvm_class_names", false); 
+		uvmMemStrategy = UvmMemStrategy.BLOCK_WRAPPED; 		
 		// ---- bench output defaults
 		initStringListParameter("add_test_command", new ArrayList<String>());
 		initBooleanParameter("generate_external_regs", false); 
@@ -473,6 +479,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 			else if (value.equals("ring8")) sysVerRootDecoderInterface = SVDecodeInterfaceTypes.RING8;
 			else if (value.equals("ring16")) sysVerRootDecoderInterface = SVDecodeInterfaceTypes.RING16;
 			else if (value.equals("ring32")) sysVerRootDecoderInterface = SVDecodeInterfaceTypes.RING32;
+			else if (value.equals("parallel_pulsed")) sysVerRootDecoderInterface = SVDecodeInterfaceTypes.PARALLEL_PULSED;
 			else sysVerRootDecoderInterface = SVDecodeInterfaceTypes.PARALLEL;  // parallel interface is default
 		}
 		else if (name.equals("secondary_decoder_interface")) {  
@@ -482,6 +489,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 			else if (value.equals("ring16")) sysVerSecondaryDecoderInterface = SVDecodeInterfaceTypes.RING16;
 			else if (value.equals("ring32")) sysVerSecondaryDecoderInterface = SVDecodeInterfaceTypes.RING32;
 			else if (value.equals("parallel")) sysVerSecondaryDecoderInterface = SVDecodeInterfaceTypes.PARALLEL;
+			else if (value.equals("parallel_pulsed")) sysVerSecondaryDecoderInterface = SVDecodeInterfaceTypes.PARALLEL_PULSED;
 			else if (value.equals("engine1")) sysVerSecondaryDecoderInterface = SVDecodeInterfaceTypes.ENGINE1;
 			else sysVerSecondaryDecoderInterface = SVDecodeInterfaceTypes.NONE;  // no interface is default
 		}
@@ -506,8 +514,13 @@ public class ExtParameters extends ExtParmsBaseListener  {
 
 		else if (name.equals("uvm_model_mode")) {  
 			if (value.equals("lite1")) uvmModelMode = UVMModelModes.LITE1;
-			else if (value.equals("translate1")) uvmModelMode = UVMModelModes.TRANSLATE1;
 			else uvmModelMode = UVMModelModes.HEAVY;
+		}
+
+		else if (name.equals("uvm_mem_strategy")) {  
+			if (value.equals("basic")) uvmMemStrategy = UvmMemStrategy.BASIC;
+			else if (value.equals("mimic_reg_api")) uvmMemStrategy = UvmMemStrategy.MIMIC_REG_API;
+			else uvmMemStrategy = UvmMemStrategy.BLOCK_WRAPPED;
 		}
 		
 		//else
@@ -534,8 +547,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		return getIntegerParameter("leaf_address_size");
 	}
 
-	/** get leafMinDataSize
-	 *  @return the leafMinDataSize (bits)
+	/** get minimum allowed register width in bits which defines the base word size (must be a power of 2 between 8 and 128)
 	 */
 	public static Integer getMinDataSize() {
 		return getIntegerParameter("min_data_size");
@@ -781,6 +793,22 @@ public class ExtParameters extends ExtParmsBaseListener  {
 	public static LinkedHashMap<String, WrapperRemapXform> sysVerWrapperXformMap() {
 		return xformMap;
 	}
+
+	public static boolean sysVerSeparateIwrapEncapFiles() {
+		return getBooleanParameter("separate_iwrap_encap_files");
+	}
+
+	public static boolean sysVerGenerateDvBindModules() {
+		return getBooleanParameter("generate_dv_bind_modules");
+	}
+
+	public static boolean sysVerUseGlobalDvBindControls() {
+		return getBooleanParameter("use_global_dv_bind_controls");
+	}
+
+	public static boolean sysVerIncludeAddrMonitor() {
+		return getBooleanParameter("include_addr_monitor");
+	}
 	
 	// bench parameter getters
 
@@ -837,6 +865,10 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		return getBooleanParameter("add_user_param_defines");
 	}
 	
+	public static Boolean jspecKeepFsetHierarchy() {
+		return getBooleanParameter("keep_fset_hierarchy");
+	}
+	
 	/** get reglistDisplayExternalRegs
 	 *  @return the reglistDisplayExternalRegs
 	 */
@@ -890,6 +922,10 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		return getBooleanParameter("regs_use_factory");
 	}
 	
+	public static Boolean uvmregsUseNumericUvmClassNames() {
+		return getBooleanParameter("use_numeric_uvm_class_names");
+	}
+		
 	public static int uvmregsMaxRegCoverageBins() {
 		return getIntegerParameter("max_reg_coverage_bins");
 	}
@@ -897,12 +933,9 @@ public class ExtParameters extends ExtParmsBaseListener  {
 	public static UVMModelModes uvmregsModelMode() {
 		return uvmModelMode;
 	}
-	
-	/** get specified uvm model parameter */
-	public static String getUvmModelParameter(String parm, String dflt) {
-		String retVal = getStringMapParameter("uvm_model_parameters").get(parm);
-		if (retVal==null) return dflt;  // return default value if parameter not found
-		return retVal;
+
+	public static UvmMemStrategy uvmregsMemStrategy() {
+		return uvmMemStrategy;
 	}
 	
 	// --------

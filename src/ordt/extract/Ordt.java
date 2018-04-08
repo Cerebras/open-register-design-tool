@@ -22,7 +22,6 @@ import ordt.output.systemverilog.SystemVerilogChildInfoBuilder;
 import ordt.output.systemverilog.SystemVerilogTestBuilder;
 import ordt.output.uvmregs.UVMRegsBuilder;
 import ordt.output.uvmregs.UVMRegsLite1Builder;
-import ordt.output.uvmregs.UVMRegsTranslate1Builder;
 import ordt.output.verilog.VerilogBuilder;
 import ordt.output.verilog.VerilogTestBuilder;
 import ordt.parameters.ExtParameters;
@@ -31,7 +30,7 @@ import ordt.parameters.ExtParameters.UVMModelModes;
 
 public class Ordt {
 
-	private static String version = "171209.01-crb";
+	private static String version = "180406.01-crb01"; 
 	private static DebugController debug = new MyDebugController(); // override design annotations, input/output files
 
 	public enum InputType { RDL, JSPEC };
@@ -210,9 +209,9 @@ public class Ordt {
 			   if (!verifyRootAddressMap(model, type)) return null;
 			   return new SystemVerilogTestBuilder(model);
 		   case UVMREGS: 
-			   return new UVMRegsBuilder(model);
+			   return new UVMRegsBuilder(model, true);
 		   case UVMREGSPKG:   
-			   return new UVMRegsBuilder(model);  // note: uses UVMRegsBuilder but not std write(), so dont use getBuilder()
+			   return new UVMRegsBuilder(model, true);  // note: uses UVMRegsBuilder but not std write(), so dont use getBuilder()
 		   case XML: 
 			   return new XmlBuilder(model);
 		   case CPPMOD: 
@@ -255,8 +254,8 @@ public class Ordt {
     		newModel = new RdlModelExtractor(inputFile);
     	}
     	
-    	// precompute min size of each regset
-    	newModel.getRoot().setAlignedSize();
+    	// precompute min size of each register and regset
+    	newModel.getRoot().setAlignedSize(ExtParameters.getMinDataSize());
     	
     	// fix simple address ordering issues 
     	if (ExtParameters.allowUnorderedAddresses()) newModel.getRoot().sortRegisters();
@@ -310,8 +309,7 @@ public class Ordt {
 
 		System.out.println("Ordt: building " + outName + "...");
 		UVMRegsBuilder uvm = (ExtParameters.uvmregsModelMode() == UVMModelModes.LITE1)? new UVMRegsLite1Builder(model) :
-			(ExtParameters.uvmregsModelMode() == UVMModelModes.TRANSLATE1)? new UVMRegsTranslate1Builder(model) :
-			new UVMRegsBuilder(model);
+			new UVMRegsBuilder(model, true);
     	if (uvm != null) {
     		uvm.write(outFileName, outName, "//");
     		

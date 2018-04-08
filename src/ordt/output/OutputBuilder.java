@@ -77,7 +77,7 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 	protected boolean regIsActive = false;  // indicator that regProperties is currently active
 	protected Stack<RegSetProperties> regSetPropertyStack = new Stack<RegSetProperties>();  // reg sets are nested so store stack
 	protected  RegSetProperties regSetProperties;  // output-relevant active register set properties  
-	private  RegSetProperties rootMapProperties;  // properties of root address map (separate from regSetProperties since root map is handled differently wrt rs stack) 
+	protected  RegSetProperties rootMapProperties;  // properties of root address map (separate from regSetProperties since root map is handled differently wrt rs stack) 
 	
 	/** reset builder state */
 	protected void resetBuilder() {
@@ -215,8 +215,10 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 			   fieldSetPropertyStack.push(fieldSetProperties);  // push active fieldset onto stack
 			   
 			   // inhibit child builder field call if external and not visiting externals
-			   if (!regProperties.isExternal() || visitExternalRegisters()) 
-			       addFieldSet();
+			   if (visitEachReg() || (regProperties.isFirstRep() && firstRegSetRep())) { // qualify add calls by valid register options	
+				   if (!regProperties.isExternal() || visitExternalRegisters()) 
+				       addFieldSet();
+			   }
 			}
 	}
 
@@ -226,9 +228,11 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 	public void finishFieldSet(FieldSetProperties fsProperties) {
 		if (fsProperties != null) {
 			//System.out.println("OutputBuilder: finishFieldSet, path=" + getInstancePath() + ", id=" + fsProperties.getId());
-			// inhibit child builder field call if external and not visiting externals
-			if (!regProperties.isExternal() || visitExternalRegisters()) 
-				finishFieldSet();
+			if (visitEachReg() || (regProperties.isFirstRep() && firstRegSetRep())) { // qualify add calls by valid register options
+				// inhibit child builder field call if external and not visiting externals
+				if (!regProperties.isExternal() || visitExternalRegisters()) 
+					finishFieldSet();
+			}
 			// save min allowed offset prior to popping from the stack
 			Integer newMinOffset = getCurrentFieldSetOffset() + fieldSetProperties.getFieldSetWidth();
 
@@ -295,6 +299,15 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 				finishRegister();   
 			}
 			regIsActive = false;
+
+			// if visiting each external reg then may need to bump next addr when done
+			if (visitEachExternalRegister() && regProperties.isLocalRootExternal() && regProperties.isLastRep()) {
+				int padRegs = Utils.getNextHighestPowerOf2(regProperties.getRepCount()) - regProperties.getRepCount();
+				if (padRegs > 0) {
+					//System.out.println("OutputBuilder finishRegister: " + regProperties.getInstancePath() + ", ext=" + regProperties.isExternal() + ", local root ext=" + regProperties.isLocalRootExternal() + ", reps=" + regProperties.getRepCount() + ", pow 2 size=" + Utils.getNextHighestPowerOf2(regProperties.getRepCount()));
+					updateNextAddress(padRegs);
+				}
+			}
 		}
 		//else System.out.println("OutputBuilder finishRegister: null regProperties");
 	}
@@ -302,12 +315,14 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 	/** finish a register for a particular output */
 	abstract public  void finishRegister();
 	
-	/** add an external register group to this output (called if external and not visiting each reg) // TODO combine with addRegisters
+	/** add an external register group to this output (called in ModRegister if external and not visiting each reg) // TODO combine with addRegisters
 	 * @param rProperties - extracted register properties */
 	public  void addExternalRegisters(RegProperties rProperties) {  
 		if (rProperties != null) {
 		   regIsActive = true;  // regProperties is valid
-		   //System.out.println("OutputBuilder: addExternalRegisters, path=" + getInstancePath() + ", id=" + rProperties.getId());
+		   
+		   //if (rProperties.isRootExternal() != rProperties.isLocalRootExternal())
+		   //   System.out.println("OutputBuilder addExternalRegisters: root mismath for inst=" + getInstancePath() + ", rootExt=" + rProperties.isRootExternal() + ", localRootExt=" + rProperties.isLocalRootExternal());
 
 		   // extract properties from instance/component
 		   regProperties = rProperties; 
@@ -348,7 +363,14 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 			    regSetProperties.updateChildHash(regProperties.hashCode(true)); // add this reg's hashcode to parent including id
 				finishRegister();   // only first rset rep here (only one call for all reg reps)
 			}
-			regIsActive = false;
+			regIsActive = false;	
+
+			// pad the the running address if this is a local-only root external with non-power 2 count
+			int padReps = Utils.getNextHighestPowerOf2(regProperties.getRepCount()) - regProperties.getRepCount();
+			if (regProperties.isLocalRootExternal() && !regProperties.isRootExternal() && (padReps > 0)) {
+				RegNumber addressIncrement = regProperties.getExtractInstance().getAddressIncrement();
+				updateNextAddress(addressIncrement, padReps); 
+			}
 		}
 	}
 
@@ -398,7 +420,7 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 			if (isNonRootExternal) newRegProperties.setBaseAddress(regSetProperties.getBaseAddress());   //  use current base to support multiple child scenarios
 			else newRegProperties.setBaseAddress(getExternalBaseAddress());   //  use ext base address stored by builder
 			newRegProperties.updateInstanceInfo(getInstancePath());  		   // set instance path and instance property assigns
-			newRegProperties.setSwReadable(true);  // TODO - this is a regset external, so set readable/writeable to true
+			newRegProperties.setSwReadable(true);  // this is a regset external, so set readable/writeable to true
 			newRegProperties.setSwWriteable(true);
 			regProperties = newRegProperties;
 		}
@@ -432,77 +454,54 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 		   
 			// get address info from instance
 		   RegNumber regSetAddress = regSetProperties.getExtractInstance().getAddress(); 
-		   RegNumber addressIncrement = regSetProperties.getExtractInstance().getAddressIncrement();
 		   RegNumber addressModulus = regSetProperties.getExtractInstance().getAddressModulus();     
 		   RegNumber addressShift = regSetProperties.getExtractInstance().getAddressShift(); 
 		   
 		   // set replication number
 		   regSetProperties.setRepNum(rep);
 		   //System.out.println("OutputBuilder addRegSet: --- rep=" + rep + ", regSetAddress=" + regSetAddress + ", incAddress=" + addressIncrement  + ", nextAddress=" + nextAddress);
- 
-		   // if an explicit address is set for this regset, then use it  
-		   if (regSetAddress != null) {
-			   //System.out.println("OutputBuilder addRegSet: --- rep=" + rep + ", regSetAddress=" + regSetAddress + ", incAddress=" + addressIncrement  + ", nextAddress=" + nextAddress);
-			   
-			   // compute relative address by adding to parent base
-			   RegNumber newBaseAddr = new RegNumber(regSetAddress);  
-			   newBaseAddr.add(getRegSetParentAddress());
-			   //System.out.println("OutputBuilder addRegSet:   parent=" + getRegSetParentAddress() + ", abs=" + newBaseAddr);
-			   
-               // compute next address if increment specified
-			   RegNumber newAddr = new RegNumber(newBaseAddr);  
-			   if (addressIncrement != null) {
-				   RegNumber incrOffset = new RegNumber(addressIncrement);
-				   incrOffset.multiply(rep);  // compute address increment based on rep number
-				   newAddr.add(incrOffset);
-				   //System.out.println("OutputBuilder addRegSet:   nextAddr=" + nextAddress + ", incr added=" + newAddr);
-			   }
-			   // only update if an increment or first iteration
-			   if ((addressIncrement != null) || regSetProperties.isFirstRep()) {
-				   if (newAddr.isLessThan(nextAddress)) {  // check for bad address here
+ 		   
+		   // if first rep, set the next address to new regset base register
+		   boolean baseAddressSpecified = false;
+		   if (regSetProperties.isFirstRep()) {
+			   // if an explicit address is set for this regset, then use it  
+			   if (regSetAddress != null) {
+				   baseAddressSpecified = true;
+				   //System.out.println("OutputBuilder addRegSet: --- rep=" + rep + ", regSetAddress=" + regSetAddress + ", incAddress=" + addressIncrement  + ", nextAddress=" + nextAddress);
+				   
+				   // compute relative address by adding to parent base
+				   RegNumber newBaseAddr = new RegNumber(regSetAddress);  
+				   newBaseAddr.add(getRegSetParentAddress());
+				   //System.out.println("OutputBuilder addRegSet:   parent=" + getRegSetParentAddress() + ", abs=" + newBaseAddr);
+
+				   // detect address errors and save next address
+				   if (newBaseAddr.isLessThan(nextAddress)) {  // check for bad address here
 					   Ordt.errorExit("out of order register set address specified in " + getInstancePath() );
 				   }
-				   setNextAddress(newAddr);  //  save computed next address   
+				   setNextAddress(newBaseAddr);  //  save computed next address   
+			    }
+			   
+			   // else if base address shift is specified
+			   else if (addressShift != null) {
+				   baseAddressSpecified = true;
+				   updateNextAddress(addressShift);
 			   }
-		    }
-		   
-		   // else if base address shift is specified
-		   else if ((addressShift != null) && (regSetProperties.isFirstRep())) {
-			   updateNextAddress(addressShift);
-		   }
 
-		   // otherwise adjust if a modulus is specified
-		   else {
-			   if ((rep>0) && (addressIncrement != null)) updateNextAddress(addressIncrement);  // bump the running address count by increment value if specified
-			   if (rep == 0) {
-				   updateNextAddressModulus(addressModulus);  // adjust the base address if a modulus is defined
-				   // get estimated size from model and check that base addr is aligned with size
-				   if (ExtParameters.useJsAddressAlignment()) {
-					   RegNumber alignBytes = regSetProperties.getExtractInstance().getRegComp().getAlignedSize();
-					   alignBytes.setNumBase(NumBase.Hex);
-					   alignBytes.setNumFormat(NumFormat.Address);
-					   if ((alignBytes != null) && alignBytes.isNonZero()) { 
-
-						   //System.out.println("OutputBuilder addRegSet: regset=" + this.getInstancePath() + ", align==" + alignBytes + ", addr=" + nextAddress + ", rep=" + regProperties.getRepCount());
-						   // if this reg isn't in an external decoder and misaligned, then display message and/or align it
-						   if (!nextAddress.isModulus(alignBytes) && !regSetProperties.isExternalDecode()) {
-							   // if an external and not root external, just display a warn message
-							   if (regSetProperties.isExternal() && !regSetProperties.isRootExternal()) {
-								   if  (!ExtParameters.suppressAlignmentWarnings()) 
-									   Ordt.warnMessage("base address for external register set " + regSetProperties.getInstancePath() + " is not " + alignBytes + "B aligned.");
-							   }
-							   else {
-								   if  (!ExtParameters.suppressAlignmentWarnings()) 
-									   Ordt.warnMessage("base address for register set " + regSetProperties.getInstancePath() + " shifted to be " + alignBytes + "B aligned.");
-								   updateNextAddressModulus(new RegNumber(alignBytes));  // adjust the address to align register set					   
-								   
-							   }
-						   }
-					   }
-				   }
+			   // otherwise adjust if a modulus is specified
+			   else if (addressModulus != null) {
+				   baseAddressSpecified = true;
+				   updateNextAddressModulus(addressModulus);  // adjust the base address if a modulus is defined					   
 			   }
+			   
+			   // if js alignment is specified or a root external regset, shift base address of first rep 
+			   if (ExtParameters.useJsAddressAlignment() || regSetProperties.isLocalRootExternal())
+				   alignRegSetAddressToSize(regSetProperties, true, baseAddressSpecified);
 		   }
 		   
+		   // for subsequent reps, get estimated size from model and check base address alignment (warnings only, no addr shift)
+		   else if (ExtParameters.useJsAddressAlignment()) 
+			   alignRegSetAddressToSize(regSetProperties, false, false);
+	   
 		   // save the base address of this reg set
 		   regSetProperties.setBaseAddress(nextAddress); 
 		   // save address of this reg set if root external 
@@ -529,22 +528,31 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 	/** add a register set for a particular output */
 	abstract public  void addRegSet();
 	
-	/** update next address after last regset/regmap rep if an increment operator is specified (called by ModRegSet generate on last rep)
+	/** update next address after last regset/regmap rep if an increment/align is specified (called by ModRegSet generate after child processing)
 	 * @param rsProperties - register set properties for active instance
 	 */
 	public  void updateLastRegSetAddress(RegSetProperties rsProperties) {   
+		// save the highest address of this reg set (last child address used)
+		RegNumber highAddress = new RegNumber(nextAddress);
+		highAddress.subtract(1);
+		rsProperties.setHighAddress(highAddress); 
+		//System.out.println("OutputBuilder updateLastRegSetAddress: id=" + rsProperties.getId() + ", next=" + nextAddress + ", highAddress=" + highAddress );	
+		
 		// if a replicated regset with increment, then set nextAddress to end of range when done
-		RegNumber regSetAddress = regSetProperties.getBaseAddress();  // base address of last regset rep (rs stack is not yet popped)
-
-		RegNumber addressIncrement = regSetProperties.getExtractInstance().getAddressIncrement();
-		if (regSetAddress != null) {
-			RegNumber newAddr = new RegNumber(regSetAddress);
-			if (regSetProperties.isLastRep() && (addressIncrement != null)) {  // non-null repCount indicated final iteration
-			   //RegNumber incrOffset = new RegNumber(addressIncrement);
-			   //incrOffset.multiply(regSetProperties.getRepCount());  // compute address increment based on replication count				
+		RegNumber regSetBaseAddress = rsProperties.getBaseAddress();  // base address of last regset rep (rs stack is not yet popped)
+		
+		RegNumber addressIncrement = rsProperties.getExtractInstance().getAddressIncrement();
+		if (regSetBaseAddress != null) {
+			RegNumber newAddr = new RegNumber(regSetBaseAddress);
+			if (addressIncrement != null) {  // if increment is specified, then pad (even if first rep)
 			   newAddr.add(addressIncrement);
 			   setNextAddress(newAddr);
 			}
+			
+			// else if no incr, get estimated size from model and align base address if root external or align is specified
+			else if ((ExtParameters.useJsAddressAlignment() && rsProperties.isReplicated())   // no address padding if not a replicated regset
+					|| (rsProperties.isLocalRootExternal() && rsProperties.isLastRep()))   // pad if last iteration of a root external
+				   alignRegSetAddressToSize(regSetProperties, true, true);
 		}		
 	}
 
@@ -552,12 +560,6 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 	 * @param rsProperties - register set properties for active instance
 	 */
 	public  void finishRegSet(RegSetProperties rsProperties) {  
-		// save the highest address of this reg set
-		RegNumber highAddress = new RegNumber(nextAddress);
-		highAddress.subtract(1);
-		regSetProperties.setHighAddress(highAddress); 
-		//System.out.println("OutputBuilder finishRegSet: id=" + rsProperties.getId() + ", next=" + nextAddress + ", highAddress=" + highAddress );		
-
 		// determine if this rep should be visited 
 		boolean visitThisRep = visitEachRegSet() || (rsProperties.isFirstRep() && firstRegSetRep());
 		// if valid visit and specified reg set type then call finishRgSet 
@@ -618,6 +620,31 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 
 
 	//---------------------------- end of add/finish methods  ----------------------------------------
+
+	/** check this register set's current address and shift address if not a mod of its stored alignedSize
+	 * @param regSetProperties - regsetProperties to be evaluated
+	 * @param shiftAddress - if true, actually shift the address (otherwise only warning will be issued on misalignment)
+	 * @param warnOnShift - if true, a warning is generated when address is shifted
+	 */
+	private void alignRegSetAddressToSize(RegSetProperties regSetProperties, boolean shiftAddress, boolean warnOnShift) {
+		RegNumber alignBytes = regSetProperties.getExtractInstance().getRegComp().getAlignedSize();
+		alignBytes.setNumBase(NumBase.Hex);
+		alignBytes.setNumFormat(NumFormat.Address);
+		if ((alignBytes != null) && alignBytes.isNonZero()) { 
+			//System.out.println("OutputBuilder alignRegSetAddressToSize: regset=" + this.getInstancePath() + ", align==" + alignBytes + ", addr=" + nextAddress + ", rep=" + regSetProperties.getRepCount());
+			// if this regset isn't in an external decoder and is misaligned, then align it
+			if (!nextAddress.isModulus(alignBytes) && !regSetProperties.isExternalDecode()) {
+				if (shiftAddress) {
+					if (warnOnShift && !ExtParameters.suppressAlignmentWarnings()) 
+						Ordt.warnMessage("base address for register set " + regSetProperties.getInstancePath() + " shifted to be " + alignBytes + "B aligned.");
+					updateNextAddressModulus(new RegNumber(alignBytes));  // adjust the address to align register set					   
+				}
+				else if (!ExtParameters.suppressAlignmentWarnings()) 
+						   Ordt.warnMessage("base address for register set " + regSetProperties.getInstancePath() + " is not " + alignBytes + "B aligned.");
+			}
+		}
+		
+	}
 	
 	/** returns true if active AddressableInstance is external */
 	protected boolean activeInstanceIsExternal() { // TODO - may need to explicity set reg vs regset to handle rootExtRegs case, signal case needs autoselect tho
@@ -1225,43 +1252,33 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 	// ------------- protected regset size accumulation methods
 
 	/** get the increment stride for this regset - must be run in finishRegSet after sub components for non-aligned case 
-	 * 
-	 * @param allowPrecomputedSize - if true and useJsAddressAlignment parameter is true, then precomputed size is returned
-	 *         when no increment value is specified.  if false, the accumulated offset from regset baseAddress is returned.
 	 */
-	protected RegNumber getRegSetAddressStride(boolean allowPrecomputedSize) {
+	protected RegNumber getRegSetAddressStride() {
 		// if address increment is specified, use it
-		RegNumber incr = regSetProperties.getExtractInstance().getAddressIncrement();
-		// otherwise use computed regset size
-		if (incr == null) incr = getRegSetSize(allowPrecomputedSize);
-		else {
-			incr.setNumFormat(NumFormat.Address);
-			incr.setNumBase(NumBase.Hex);
+		RegNumber stride = regSetProperties.getExtractInstance().getAddressIncrement();
+		if (stride != null) {
+			stride.setNumFormat(NumFormat.Address);
+			stride.setNumBase(NumBase.Hex);
 			// error if increment specified is too small
-			if (incr.isLessThan(regSetProperties.getAlignedSize()))
+			if (regSetProperties.isReplicated() && stride.isLessThan(regSetProperties.getAlignedSize()))
 				Ordt.errorMessage("register set " + regSetProperties.getInstancePath() + 
-						" address increment (" + incr +") is smaller than its min size (" + regSetProperties.getAlignedSize().toFormat(NumBase.Hex, NumFormat.Address) +")"); 
+						" address increment (" + stride +") is smaller than its min size (" + regSetProperties.getAlignedSize().toFormat(NumBase.Hex, NumFormat.Address) +")"); 
 		}
-		return incr;
-	}
-
-	/** get the size of this regset - must be run in finishRegSet after sub components for non-aligned case
-	 * 
-	 * @param allowPrecomputedSize - if true and useJsAddressAlignment parameter is true, then precomputed size is returned.
-	 *         if false, the accumulated offset from regset baseAddress is returned.
-	 */
-	protected RegNumber getRegSetSize(boolean allowPrecomputedSize) {
-		// if aligned then output the precomputed size
-		if (allowPrecomputedSize && ExtParameters.useJsAddressAlignment())
-			return regSetProperties.getAlignedSize();
 		// otherwise use computed regset size
-		RegNumber incr = new RegNumber(getNextAddress());
-		incr.subtract(regSetProperties.getBaseAddress());
-		//System.out.println("OutputBuilder getRegSetSize: " + regSetProperties.getInstancePath() + 
-		//				" computed size = " + incr);
-		incr.setNumFormat(NumFormat.Address);
-		incr.setNumBase(NumBase.Hex);
-		return incr;
+		else if ((regSetProperties.isReplicated() && ExtParameters.useJsAddressAlignment())
+			|| (regSetProperties.isLocalRootExternal() && regSetProperties.isLastRep())) {
+			return regSetProperties.getAlignedSize();
+		}
+	    // otherwise use computed regset size
+		else {
+			stride = new RegNumber(getNextAddress());
+			stride.subtract(regSetProperties.getBaseAddress());
+			//System.out.println("OutputBuilder getRegSetSize: " + regSetProperties.getInstancePath() + 
+			//				" computed size = " + incr);
+			stride.setNumFormat(NumFormat.Address);
+			stride.setNumBase(NumBase.Hex);
+		}
+		return stride;
 	}
 
 	// ------------------------ next address calc methods -----------------
@@ -1410,13 +1427,13 @@ public abstract class OutputBuilder implements OutputWriterIntf{
     	}
 	}
 	
-	/** write specified output list to specified output file.
+	/** write specified list of output statements to specified output file. File is opened/created on entry and closed on return.
 	 *  The default bufferedWriter for this OutputBuilder is not affected. 
 	 * @param outName - output file or directory
 	 * @param description - text description of file generated
 	 * @param commentPrefix - comment chars for this file type 
 	 * @param simple list of lines to be written */
-	public void simple_write(String outName, String description, String commentPrefix, List<String> stmts) {
+	public void writeStatementsToFile(String outName, String description, String commentPrefix, List<String> stmts) {
     	BufferedWriter bw = openBufferedWriter(outName, description);
     	if (bw != null) {
     		// write the file header

@@ -107,6 +107,7 @@ ext_parm_defs
    | 'root_instance_name' EQ STR
    | 'root_instance_repeat' EQ NUM
    | 'add_user_param_defines' EQ bool
+   | 'keep_fset_hierarchy' EQ bool
    ;
    
 // ------------ systemverilog_out_defs
@@ -121,8 +122,8 @@ ext_parm_defs
  systemverilog_out_parm_assign
    : 'leaf_address_size' EQ NUM
    | 'root_has_leaf_interface' EQ bool 
-   | 'root_decoder_interface' EQ ('leaf' | 'parallel' | 'serial8' | 'ring8' | 'ring16' | 'ring32') 
-   | 'secondary_decoder_interface' EQ ('none' | 'leaf' | 'parallel' | 'serial8' | 'ring8' | 'ring16' | 'ring32' | 'engine1') 
+   | 'root_decoder_interface' EQ ('leaf' | 'parallel' | 'parallel_pulsed' | 'serial8' | 'ring8' | 'ring16' | 'ring32') 
+   | 'secondary_decoder_interface' EQ ('none' | 'leaf' | 'parallel' | 'parallel_pulsed' | 'serial8' | 'ring8' | 'ring16' | 'ring32' | 'engine1') 
    | 'secondary_base_address' EQ NUM 
    | 'secondary_low_address' EQ NUM 
    | 'secondary_high_address' EQ NUM 
@@ -149,12 +150,16 @@ ext_parm_defs
    | 'nack_partial_writes' EQ bool
    | 'write_enable_size' EQ NUM
    | 'max_internal_reg_reps' EQ NUM
+   | 'separate_iwrap_encap_files' EQ bool 
+   | 'generate_dv_bind_modules' EQ bool 
+   | 'use_global_dv_bind_controls' EQ bool 
+   | 'include_addr_monitor' EQ bool 
    ;
    
  systemverilog_wrapper_info
    : 'wrapper_info'
      LBRACE
-     ( systemverilog_wrapper_remap_command )*
+     ( systemverilog_wrapper_remap_command )+
      RBRACE
    ;
    
@@ -180,9 +185,10 @@ ext_parm_defs
    | 'max_reg_coverage_bins' EQ NUM
    | 'reuse_uvm_classes' EQ bool
    | 'skip_no_reset_db_update' EQ bool
-   | 'uvm_model_mode' EQ ('heavy' | 'lite1' | 'translate1') 
-   | 'uvm_model_parameters' EQ STR 
+   | 'uvm_model_mode' EQ ('heavy' | 'lite1') 
    | 'regs_use_factory' EQ bool
+   | 'use_numeric_uvm_class_names' EQ bool
+   | 'uvm_mem_strategy' EQ ('basic' | 'block_wrapped' | 'mimic_reg_api') 
    ;   
    
 // ------------ reglist_out_defs
@@ -379,6 +385,7 @@ ext_parm_defs
   | 'js_macro_name'   // added
   | 'js_macro_mode'   // added
   | 'js_namespace'   // added
+  | 'js_repeat_max'   // added
   | 'js_typedef_name'   // added   deprecate?
   | 'js_instance_name'   // added   deprecate?
   | 'js_instance_repeat'   // added   deprecate?

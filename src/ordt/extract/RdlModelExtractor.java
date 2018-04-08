@@ -614,10 +614,16 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 		String property = lhsInstanceRef.getProperty();
 		String instPathStr = lhsInstanceRef.getInstPathStr();
 		rhsInstanceRef = null;  // clear out the rhsRef
-				
+		
+		//System.out.println("RdlModelExtractor enterPost_property_assign: dref instance " + instPathStr + ", property=" + property + ", wildcards=" + lhsInstanceRef.hasWildcard()); 
+		// exit with error if an array indexed value is used on lhs	
+		if ((instPathStr!=null) && instPathStr.contains("[")) {
+			Ordt.errorMessage("property assignment using indexed values in lhs not supported: " + ctx.getText());
+			return;
+		}
+		
 		// if an instance ref of form: path -> property
 		if (lhsInstanceRef.hasDeRef()) { 
-			//System.out.println("RdlModelExtractor enterPost_property_assign: dref instance " + instPathStr + ", property=" + property + ", wildcards=" + lhsInstanceRef.hasWildcard()); 
 			// search for instance having this path in the current component definition
 			ModComponent comp = activeCompDefs.peek();
 			//System.out.println("RegExtractor: post prop assign active component =" + comp.getId()); 
@@ -630,8 +636,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 				// if no field wildcard then assign value to this instance
 				if (!lhsInstanceRef.hasWildcard()) {
 					String rhsValue = (postPropertyAssignChildren>1) ? noEscapes(ctx.getChild(2).getText().replace("\"","")) : "true"; // check for right hand assignment
-					//if (rhsValue.contains("bla")) Jrdl.infoMessage("RegExtractor: instance_ref=" + instanceRefTree.getText() + ", prop=" + property + ", val=" + rhsValue+ ", len=" + rhsValue.length());
-					comp.addParameter(instPathStr, property, rhsValue);  // TODO - add depth calculation
+					comp.addParameter(instPathStr, property, rhsValue);
 				}
 				// field wildcard, so assign to all child instances
 				else {
@@ -658,10 +663,9 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 				Ordt.errorMessage("unable to find lhs instance or property in assignment: " + ctx.getText());
 		    // if this instance is found in local component then save the prop assignment
 			else {
+				//System.out.println("RdlModelExtractor enterPost_property_assign: found lhs instance "+ instPathStr); 
 				String rhsValue = (postPropertyAssignChildren>1) ? noEscapes(ctx.getChild(2).getText().replace("\"","")) : "true"; // check for right hand assignment
 				comp.addParameter(instPathStr, property, rhsValue);
-				//if (rhsValue.contains("bla")) Jrdl.infoMessage("RegExtractor: instance_ref=" + instanceRefTree.getText() + ", prop=" + property + ", val=" + rhsValue);
-				//regInst.display();
 			}
 		}
 
@@ -1030,7 +1034,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 		// extract array values if they exist after processing address/reset assigns    array [ nnn : nnn ] 
 		//System.out.println("RdlModelExrtactor extractInstanceAddressInfo: childrenFound="+ childrenFound);
 		if (ctx.getChildCount()>childrenFound) {
-			Integer leftIdx = Utils.strToInteger(ctx.getChild(1).getChild(1).getText(), " in instance " + activeInstance.getId());
+			Integer leftIdx = Utils.numStrToPosInteger(ctx.getChild(1).getChild(1).getText(), " in instance " + activeInstance.getId());
 			// save repcount (fieldsets not allowed in rdl so only addressable can be replicated)
 			if (activeInstance.isAddressable()) 
 				activeInstance.setRepCount(leftIdx); // left index will set repcount  
@@ -1041,7 +1045,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 
 				// if a second index, set explicit offset and width
 				if (ctx.getChild(1).getChildCount()>3) {
-					Integer rightIdx = Utils.strToInteger(ctx.getChild(1).getChild(3).getText(), " in instance " + activeInst.getId());
+					Integer rightIdx = Utils.numStrToPosInteger(ctx.getChild(1).getChild(3).getText(), " in instance " + activeInst.getId());
 					activeInst.setWidth(leftIdx - rightIdx + 1);  // TODO assumes lsb0						
 					activeInst.setOffset(rightIdx);  						
 				}

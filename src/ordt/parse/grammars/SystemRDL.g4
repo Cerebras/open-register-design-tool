@@ -29,9 +29,10 @@ Changes:
 - added uvmreg_prune register property
 - added fieldstruct component type
 - added use_struct, use_new_struct properties for systemverilog IO interface encaps
-- added js_macro_name, js_macro_mode, js_namespece parms
+- added js_macro_name, js_macro_mode, js_namespace parms
 - implemented_rdl_property define is moved to ExtParams
 - allowed repeat define of same user property in parser - flagged as warn later
+- made component instance address order more flexible to allow increment after modulus
 */
 
 grammar SystemRDL;
@@ -178,10 +179,8 @@ component_inst_elem
   : id
     (array)?
     (EQ  num)?   // reset
-    (AT  num)?   // address
-    (RSHIFT  num)?   // addr skip
-    (INC num)? //addr inc
-    (MOD num)?  //addr mod
+    ( ( ((AT | RSHIFT | MOD)  num)? (INC num)? )   // base address select followed by increment
+    | ( (INC num)? ((AT | RSHIFT | MOD)  num)? ) )   // or increment followed by base address select
   ;
 
 array

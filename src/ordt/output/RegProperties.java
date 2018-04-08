@@ -38,7 +38,7 @@ public class RegProperties extends AddressableInstanceProperties {
 	private boolean hasHaltOutputDefined = false;   // reg has halt output
 	
 	// uvmregs test info
-	private boolean isMem = false;
+	private Boolean isUvmMem = null;  // store explicitly set uvm_mem state
 	private boolean uvmRegPrune = false;
 	
 	// cppmod info
@@ -90,7 +90,10 @@ public class RegProperties extends AddressableInstanceProperties {
 		// now extract from the combined instance properties
 		// extract boolean test properties
 		if (pList.hasTrueProperty("donttest")) setDontTest(true);
+		else if (pList.hasFalseProperty("donttest")) setDontTest(false);
+		
 		if (pList.hasTrueProperty("dontcompare")) setDontCompare(true);
+		else if (pList.hasFalseProperty("dontcompare")) setDontCompare(false);
 		
 		// extract jspec attributes to be passed thru
 		if (pList.hasProperty("js_attributes")) setJspecAttributes(pList.getProperty("js_attributes"));
@@ -102,11 +105,15 @@ public class RegProperties extends AddressableInstanceProperties {
 		}
 		
 		// extract uvmregs test info
-		if (pList.hasTrueProperty("uvmreg_is_mem")) setMem(true);
+		if (pList.hasTrueProperty("uvmreg_is_mem")) setUvmMem(true);
+		else if (pList.hasFalseProperty("uvmreg_is_mem")) setUvmMem(false);
+		
 		if (pList.hasTrueProperty("uvmreg_prune")) setUvmRegPrune(true);
+		else if (pList.hasFalseProperty("uvmreg_prune")) setUvmRegPrune(false);
 		
 		// extract c++ model info
 		if (pList.hasTrueProperty("cppmod_prune")) setCppModPrune(true);
+		else if (pList.hasFalseProperty("cppmod_prune")) setCppModPrune(false);
 	}
     
 	/** extract a PropertyList of user defined parameters for this instance */
@@ -298,14 +305,16 @@ public class RegProperties extends AddressableInstanceProperties {
 		this.hasHaltOutputDefined = hasHaltOutputDefined;
 	}
 
-	/** get uvmreg isMem */
-	public boolean isMem() {
-		return isMem;
+	/** return true is this register array should be modeled as uvm_mem */
+	public boolean isUvmMem() {
+		if (!isReplicated()) return false;  // only replicated regs can be modeled as uvm_mem
+		if (isUvmMem != null) return isUvmMem;  // use explicit setting
+		return (getRepCount() >= ExtParameters.uvmregsIsMemThreshold());  // otherwise model as a mem if over replication threshold
 	}
 	
-	/** set uvmreg isMem */
-	public void setMem(boolean isMem) {
-		this.isMem = isMem;
+	/** identify this reg as a uvm memory */
+	public void setUvmMem(boolean isUvmMem) {
+		this.isUvmMem = isUvmMem;
 	}
 	
 	/** return true if this register is to be pruned from uvmreg model output */
@@ -372,13 +381,15 @@ public class RegProperties extends AddressableInstanceProperties {
 	 */
 	public int addFieldSet(FieldSetProperties fieldSetProperties, int parentFsOffset) {
 		Integer fsOffset = fieldSetProperties.getExtractInstance().getOffset();  // get specified relative offset, could be fixed or floating
+		//System.out.println("RegProperties addFieldSet: incoming state (highAvailableIdx=" + highAvailableIdx + ",fieldSetOffset=" + fieldSetOffset + ", minValidOffset=" + minValidOffset + ")");
 		// adjust current fieldset offset
 		fieldSetOffset = (fsOffset==null)? highAvailableIdx : parentFsOffset + fsOffset;  // TODO null offset is correct only if packing from low to high since highAvailableIdx is absolute
-        if (fieldSetOffset<parentFsOffset) Ordt.errorExit("Unable to fit fieldset " + fieldSetProperties.getId() + " in register " + getInstancePath());
+		if (fieldSetOffset<parentFsOffset) Ordt.errorExit("Unable to fit fieldset " + fieldSetProperties.getId() + " in register " + getInstancePath());
         // set the min allowed register offset including any padding
 		Integer bitPaddingOffset = ((ModRegister) getExtractInstance().getRegComp()).getPadBits();
 		int newMinValidOffset = bitPaddingOffset + fieldSetOffset;
 		if (newMinValidOffset>minValidOffset) minValidOffset = newMinValidOffset; // only update if offset increases
+		//System.out.println("RegProperties addFieldSet: outgoing state (highAvailableIdx=" + highAvailableIdx + ",fieldSetOffset=" + fieldSetOffset + ", minValidOffset=" + minValidOffset + ")");
         return fieldSetOffset - parentFsOffset;
 	}
 
@@ -387,13 +398,17 @@ public class RegProperties extends AddressableInstanceProperties {
 	 * @param minOffset - min valid fieldset offset for field placement (total of fieldset offsets + width w/o padding)
 	 * */
 	public void restoreFieldSetOffsets(Integer newOffset, Integer minOffset) {
+		//System.out.println("RegProperties restoreFieldSetOffsets: inputs (newOffset=" + newOffset + ", minOffset=" + minOffset + ")");
+		//System.out.println("RegProperties restoreFieldSetOffsets: incoming state (highAvailableIdx=" + highAvailableIdx + ",fieldSetOffset=" + fieldSetOffset + ", minValidOffset=" + minValidOffset + ")");
 		// adjust current offset
 		fieldSetOffset = (newOffset==null)? highAvailableIdx : newOffset;  // TODO null offset is correct only if packing from low to high since highAvailableIdx is absolute
         // set the min allowed register offset including any padding
 		Integer bitPaddingOffset = ((ModRegister) getExtractInstance().getRegComp()).getPadBits();
 		if (minOffset!=null) minValidOffset = bitPaddingOffset + minOffset; 
+		// adjust highAvailableIdx if below minValidOffset
+		if (highAvailableIdx < minValidOffset) highAvailableIdx = minValidOffset;
 		//if (getId().equals("blabla")) 
-		//  System.out.println("RegProperties setFieldSetOffset: (newOffset=" + newOffset + ", minOffset=" + minOffset + ") -> (fieldSetOffset=" + fieldSetOffset + ", minValidOffset=" + minValidOffset + ")");
+		//System.out.println("RegProperties restoreFieldSetOffsets: outgoing state (highAvailableIdx=" + highAvailableIdx + ",fieldSetOffset=" + fieldSetOffset + ", minValidOffset=" + minValidOffset + ")");
 		return;
 	}
 
@@ -419,7 +434,7 @@ public class RegProperties extends AddressableInstanceProperties {
 		else lowFieldIndex = addFloatingField(width);  // FIXME - fieldsetoffset and padding should constrain valid ranges (min valid has these)
 		// now create the output array index string
 		if (lowFieldIndex == null) {
-			Ordt.errorExit("Unable to fit all fields in register instance " + getId());
+			Ordt.errorExit("Unable to fit all fields in " + getRegWidth() + "b register instance " + getInstancePath());
 		}
 		//if (getId().equals("scfg_data")) System.out.println("RegProperties addField: id=" + fieldProperties.getInstancePath() + ", adding at reg lowFieldIndex=" + lowFieldIndex);
 		fieldCount++;  // bump the field count
@@ -511,7 +526,7 @@ public class RegProperties extends AddressableInstanceProperties {
 		result = prime * result + (hasHaltOutputDefined ? 1231 : 1237);
 		result = prime * result + (hasInterruptFields ? 1231 : 1237);
 		result = prime * result + (hasInterruptOutputDefined ? 1231 : 1237);
-		result = prime * result + (isMem ? 1231 : 1237);
+		result = prime * result + (isUvmMem() ? 1231 : 1237);  // FIXME - add equals/hash modes
 		result = prime * result + ((jspecAttributes == null) ? 0 : jspecAttributes.hashCode());
 		result = prime * result + ((regWidth == null) ? 0 : regWidth.hashCode());
 		result = prime * result + fieldHash;
@@ -564,7 +579,7 @@ public class RegProperties extends AddressableInstanceProperties {
 			return false;
 		if (hasInterruptOutputDefined != other.hasInterruptOutputDefined)
 			return false;
-		if (isMem != other.isMem)
+		if (isUvmMem() != other.isUvmMem())
 			return false;
 		if (jspecAttributes == null) {
 			if (other.jspecAttributes != null)

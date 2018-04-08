@@ -14,6 +14,7 @@ import ordt.extract.RegNumber.NumFormat;
 import ordt.output.systemverilog.SystemVerilogDefinedSignals.DefSignalType;
 import ordt.output.systemverilog.common.SystemVerilogModule;
 import ordt.output.systemverilog.common.SystemVerilogSignal;
+import ordt.output.systemverilog.io.SystemVerilogIOSignalList;
 import ordt.output.AddressableInstanceProperties;
 //import ordt.output.RegProperties;
 import ordt.parameters.ExtParameters;
@@ -64,6 +65,20 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 		return decoderList;
 	}
 
+	// -------------------------- IO list helper methods ----------------------------
+	
+	/** add a new scalar IO signal to the hw list based on sigType */
+	public void addHwScalar(DefSignalType sigType) {
+		this.addHwVector(sigType, 0, 1);
+	}
+
+	/** add a new vector IO signal  to the hw list based on sigType */
+	public void addHwVector(DefSignalType sigType, int lowIndex, int size) {
+		SystemVerilogIOSignalList sigList = ioHash.get(SystemVerilogBuilder.HW);  // get the hw siglist
+		if (sigList == null) return;
+		sigList.addVector(sigType, lowIndex, size); 
+	}
+
 	// ------------------------------ decoder pio interface methods -------------------------------
 	
 	public void setPrimaryInterfaceType(SVDecodeInterfaceTypes interfaceType) {
@@ -108,7 +123,7 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 		}
 		
 		// generate common internal pio interface code
-		this.generateCommonPio();	
+		this.generateCommonPio(topRegProperties);
 	}
 
 	/** create primary processor interface */
@@ -120,7 +135,8 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 		else if (hasPrimaryInterfaceType(SVDecodeInterfaceTypes.RING8)) this.genRingPioInterface(8, topRegProperties, true);
 		else if (hasPrimaryInterfaceType(SVDecodeInterfaceTypes.RING16)) this.genRingPioInterface(16, topRegProperties, true);
 		else if (hasPrimaryInterfaceType(SVDecodeInterfaceTypes.RING32)) this.genRingPioInterface(32, topRegProperties, true);
-		else if (hasPrimaryInterfaceType(SVDecodeInterfaceTypes.PARALLEL)) this.genParallelPioInterface(topRegProperties, true);
+		else if (hasPrimaryInterfaceType(SVDecodeInterfaceTypes.PARALLEL)) this.genParallelPioInterface(topRegProperties, true, false);
+		else if (hasPrimaryInterfaceType(SVDecodeInterfaceTypes.PARALLEL_PULSED)) this.genParallelPioInterface(topRegProperties, true, true);
 		else {
 			String instStr = (topRegProperties == null)? "root" : topRegProperties.getInstancePath();
 			Ordt.errorExit("invalid decoder primary interface type specified for addrmap instance " + instStr);
@@ -136,7 +152,8 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 		else if (hasSecondaryInterfaceType(SVDecodeInterfaceTypes.RING8)) this.genRingPioInterface(8, topRegProperties, false);
 		else if (hasSecondaryInterfaceType(SVDecodeInterfaceTypes.RING16)) this.genRingPioInterface(16, topRegProperties, false);
 		else if (hasSecondaryInterfaceType(SVDecodeInterfaceTypes.RING32)) this.genRingPioInterface(32, topRegProperties, false);
-		else if (hasSecondaryInterfaceType(SVDecodeInterfaceTypes.PARALLEL)) this.genParallelPioInterface(topRegProperties, false);
+		else if (hasSecondaryInterfaceType(SVDecodeInterfaceTypes.PARALLEL)) this.genParallelPioInterface(topRegProperties, false, false);
+		else if (hasSecondaryInterfaceType(SVDecodeInterfaceTypes.PARALLEL_PULSED)) this.genParallelPioInterface(topRegProperties, false, true);
 		else if (hasSecondaryInterfaceType(SVDecodeInterfaceTypes.ENGINE1)) this.genEngine1Interface(topRegProperties);
 		else {
 			String instStr = (topRegProperties == null)? "root" : topRegProperties.getInstancePath();
@@ -157,7 +174,7 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 	}
 
 	/** generate common internal pio interface code */
-	private void generateCommonPio() {
+	private void generateCommonPio(AddressableInstanceProperties topRegProperties) {
 		// add internal registered input sigs
 		this.addScalarReg("pio_write_active");  // write indication
 		this.addScalarReg("pio_read_active");  // read indication
@@ -256,7 +273,69 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 		//this.addCombinAssign("pio i/f", "$display($time, \" Entering pio i/f block...\");"); 
 
 		this.addVectorReg("dec_pio_read_data_next", 0, builder.getMaxRegWidth());  // read data assignment signal
-		this.addScalarReg("external_transaction_active");    		   
+		this.addScalarReg("external_transaction_active");
+		
+		// if addr monitoring is enabled, then add these IO
+		if (mapHasMultipleAddresses() && ExtParameters.sysVerIncludeAddrMonitor())  generateAddrMonitor(topRegProperties, "pio_dec_address_d1", 
+					"pio_activate_write", "pio_activate_read", pioInterfaceAckNextName, pioInterfaceNackNextName);
+	}
+
+	/** generate the address monitor IO (output write ack/nack, read ack/nack pulses) */
+	private void generateAddrMonitor(AddressableInstanceProperties addrInstProperties, String addrName,
+			String writeName, String readName, String ackName, String nackName) {
+		String instPathStr = (addrInstProperties == null)? "" : "_" + addrInstProperties.getBaseName();
+		
+		// create address monitor IOs
+		String addrMonitorLowAddrName = "h2d" + instPathStr + "_addr_mon_low_addr";                      
+		String addrMonitorHighAddrName = "h2d" + instPathStr + "_addr_mon_high_addr";                      
+		
+		String addrMonitorReadAckName = "d2h" + instPathStr + "_addr_mon_rd_ack_o";                      
+		String addrMonitorReadNackName = "d2h" + instPathStr + "_addr_mon_rd_nack_o";                      
+		String addrMonitorWriteAckName = "d2h" + instPathStr + "_addr_mon_wr_ack_o";                      
+		String addrMonitorWriteNackName = "d2h" + instPathStr + "_addr_mon_wr_nack_o"; 
+		
+		String addrMonitorReadAckNextName = addrMonitorReadAckName + "_next";                      
+		String addrMonitorReadNackNextName = addrMonitorReadNackName + "_next";                      
+		String addrMonitorWriteAckNextName = addrMonitorWriteAckName + "_next";                      
+		String addrMonitorWriteNackNextName = addrMonitorWriteNackName + "_next";   
+		
+		this.addSimpleVectorFrom(SystemVerilogBuilder.HW, addrMonitorLowAddrName, builder.getAddressLowBit(), builder.getMapAddressWidth());    // low address 
+		this.addSimpleVectorFrom(SystemVerilogBuilder.HW, addrMonitorHighAddrName, builder.getAddressLowBit(), builder.getMapAddressWidth());    // high address 
+		
+		this.addSimpleScalarTo(SystemVerilogBuilder.HW, addrMonitorReadAckName);     
+		this.addSimpleScalarTo(SystemVerilogBuilder.HW, addrMonitorReadNackName); 
+		this.addSimpleScalarTo(SystemVerilogBuilder.HW, addrMonitorWriteAckName); 
+		this.addSimpleScalarTo(SystemVerilogBuilder.HW, addrMonitorWriteNackName); 
+		
+		this.addScalarReg(addrMonitorReadAckName);
+		this.addScalarReg(addrMonitorReadNackName);
+		this.addScalarReg(addrMonitorWriteAckName);
+		this.addScalarReg(addrMonitorWriteNackName);
+		
+		this.addResetAssign("address monitor", builder.getDefaultReset(), addrMonitorReadAckName + " <= #1  1'b0;");  
+		this.addRegAssign("address monitor",  addrMonitorReadAckName + " <= #1  " + addrMonitorReadAckNextName + ";");  
+		this.addResetAssign("address monitor", builder.getDefaultReset(), addrMonitorReadNackName + " <= #1  1'b0;");  
+		this.addRegAssign("address monitor",  addrMonitorReadNackName + " <= #1  " + addrMonitorReadNackNextName + ";");  
+		this.addResetAssign("address monitor", builder.getDefaultReset(), addrMonitorWriteAckName + " <= #1  1'b0;");  
+		this.addRegAssign("address monitor",  addrMonitorWriteAckName + " <= #1  " + addrMonitorWriteAckNextName + ";");  
+		this.addResetAssign("address monitor", builder.getDefaultReset(), addrMonitorWriteNackName + " <= #1  1'b0;");  
+		this.addRegAssign("address monitor",  addrMonitorWriteNackName + " <= #1  " + addrMonitorWriteNackNextName + ";");  
+
+		// create combi output values		
+		this.addScalarWire(addrMonitorReadAckNextName);
+		this.addScalarWire(addrMonitorReadNackNextName);
+		this.addScalarWire(addrMonitorWriteAckNextName);
+		this.addScalarWire(addrMonitorWriteNackNextName);
+		
+		// create address match signal
+		this.addScalarWire("addr_monitor_match");
+		this.addWireAssign("addr_monitor_match = ((" + addrName + " >= " + addrMonitorLowAddrName + ") && (" + addrName + " <= " + addrMonitorHighAddrName + "));");
+		
+		// assign monitor outputs
+		this.addWireAssign(addrMonitorReadAckNextName + " = addr_monitor_match && " + readName + " && " + ackName + ";");
+		this.addWireAssign(addrMonitorReadNackNextName + " = addr_monitor_match && " + readName + " && " + nackName + ";");
+		this.addWireAssign(addrMonitorWriteAckNextName + " = addr_monitor_match && " + writeName + " && " + ackName + ";");
+		this.addWireAssign(addrMonitorWriteNackNextName + " = addr_monitor_match && " + writeName + " && " + nackName + ";");
 	}
 
 	/** return true if write enables are specified */
@@ -549,8 +628,10 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 
 	}
 
-	/** add parallel interface signals (internal intf signals passed thru to interface) */
-	private void genParallelPioInterface(AddressableInstanceProperties topRegProperties, boolean isPrimary) {
+	/** add parallel interface signals (internal intf signals passed thru to interface)
+	 * @param pulseControls - if true, incoming read and write control IOs are assumed to be single pulse
+	 */
+	private void genParallelPioInterface(AddressableInstanceProperties topRegProperties, boolean isPrimary, boolean pulseControls) {
 		//System.out.println("SystemVerilogDecodeModule: generating decoder with parallel interface, id=" + topRegProperties.getInstancePath());
 		// set internal interface names
 		String pioInterfaceAddressName = getSigName(isPrimary, this.pioInterfaceAddressName);
@@ -623,8 +704,23 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 		this.addWireAssign(pioInterfaceWriteDataName + " = " + ioWriteDataName + ";");
 		if (hasWriteEnables()) this.addWireAssign(pioInterfaceWriteEnableName + " = " + ioWriteEnableName + ";");
 		if (builder.getMaxRegWordWidth() > 1) this.addWireAssign(pioInterfaceTransactionSizeName + " = " + ioTransactionSizeName + ";");
+		
+		// if pulsed controls are specified, generate internal level-based controls
+		String levelIoReName = ioReName + "_lvl";
+		String levelIoWeName = ioWeName + "_lvl";
+		if (pulseControls) {
+			String groupName = getGroupPrefix(isPrimary) + "parallel pulsed i/f signals";  
+			this.addScalarReg(levelIoReName);   
+			this.addResetAssign(groupName, builder.getDefaultReset(), levelIoReName + " <= #1  1'b0;");  
+			this.addScalarReg(levelIoWeName);   
+			this.addResetAssign(groupName, builder.getDefaultReset(), levelIoWeName + " <= #1  1'b0;");  
+			this.addRegAssign(groupName,  levelIoReName + " <= #1  " + ioReName  + " | (" + levelIoReName + " & ~(" + pioInterfaceAckName + " | " + pioInterfaceNackName + "));");
+			this.addRegAssign(groupName,  levelIoWeName + " <= #1  " + ioWeName  + " | (" + levelIoWeName + " & ~(" + pioInterfaceAckName + " | " + pioInterfaceNackName + "));");
+		}
 		// generate re/we assigns - use delayed versions if this is a single primary
-		assignReadWriteRequests(ioReName, ioWeName, pioInterfaceReName, pioInterfaceWeName, !hasSecondaryInterface());
+		String activeIoReName = pulseControls? levelIoReName : ioReName;
+		String activeIoWeName = pulseControls? levelIoWeName : ioWeName;
+		assignReadWriteRequests(activeIoReName, activeIoWeName, pioInterfaceReName, pioInterfaceWeName, !hasSecondaryInterface());
 		
 		// assign output IOs to internal interface
 		if (builder.getMaxRegWordWidth() > 1) this.addWireAssign(ioRetTransactionSizeName + " = " + pioInterfaceRetTransactionSizeName + ";");	
@@ -2517,9 +2613,9 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 		
 		// if not optimized interface or writeable then add write external data/wr outputs
 		if (!useAckStateMachine || addrInstProperties.isSwWriteable()) {
-			this.addSimpleVectorTo(SystemVerilogBuilder.HW, decodeToHwName, 0, addrInstProperties.getMaxRegWidth());    // add write data to decode to hw signal list 
-			if (hasWriteEnables()) this.addSimpleVectorTo(SystemVerilogBuilder.HW, decodeToHwEnableName, 0, addrInstProperties.getWriteEnableWidth());    // add write data to decode to hw signal list 
-			this.addSimpleScalarTo(SystemVerilogBuilder.HW, decodeToHwWeName);
+			this.addHwVector(DefSignalType.D2H_DATA, 0, addrInstProperties.getMaxRegWidth());    // add write data to decode to hw signal list
+			if (hasWriteEnables()) this.addHwVector(DefSignalType.D2H_ENABLE, 0, addrInstProperties.getWriteEnableWidth());    // add write data to decode to hw signal list
+			this.addHwScalar(DefSignalType.D2H_WE);
 			if (!useAckStateMachine) this.addWireAssign(decodeToHwWeName + " = " + extIf.decodeToHwWeName +  ";");
 			else this.addScalarReg(decodeToHwWeName); 
 			this.addWireAssign(decodeToHwName + " = " + extIf.decodeToHwName +  ";");
@@ -2530,17 +2626,17 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 		this.addVectorWire(extIf.hwToDecodeName, 0, addrInstProperties.getMaxRegWidth());
 		int regWordBits = Utils.getBits(addrInstProperties.getMaxRegWordWidth());
 		if (!useAckStateMachine || addrInstProperties.isSwReadable()) {
-			this.addSimpleScalarTo(SystemVerilogBuilder.HW, decodeToHwReName);     
-			this.addSimpleVectorFrom(SystemVerilogBuilder.HW, hwToDecodeName, 0, addrInstProperties.getMaxRegWidth());    // add read data to hw to decode signal list 
+			this.addHwScalar(DefSignalType.D2H_RE);
+			this.addHwVector(DefSignalType.H2D_DATA, 0, addrInstProperties.getMaxRegWidth());    // add read data to hw to decode signal list
 			if (!useAckStateMachine) this.addWireAssign(decodeToHwReName + " = " + extIf.decodeToHwReName +  ";");
 			else this.addScalarReg(decodeToHwReName);        
 			this.addWireAssign(extIf.hwToDecodeName + " = " + hwToDecodeName +  ";");   
 		}
 		else { // otherwise tie off read data input
-			this.addWireAssign(extIf.hwToDecodeName + " = " + regWordBits + "'b0;");   
+			this.addWireAssign(extIf.hwToDecodeName + " = " + addrInstProperties.getMaxRegWidth() + "'b0;");   
 		}
 		
-		this.addSimpleScalarFrom(SystemVerilogBuilder.HW, hwToDecodeAckName);     // ack input is always needed
+		this.addHwScalar(DefSignalType.H2D_ACK);     // ack input is always needed
 
 		// use state machine if read/write limited (regs only), so need to gen nacks or is a reg
 	    if (useAckStateMachine) {
@@ -2562,7 +2658,7 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 				this.addWireAssign(validSizeCond + " = 1'b1;");  // not a wide reg space, so always valid
 			
 	    	// add nack input if override specified
-			if (keepNack) this.addSimpleScalarFrom(SystemVerilogBuilder.HW, hwToDecodeNackName); 
+			if (keepNack) this.addHwScalar(DefSignalType.H2D_NACK);
 			
 			// generate validReadCond - nack on addr out of range or if not readable
 			String validReadCond = "par_" + addrInstProperties.getBaseName() + "_valid_read"; 
@@ -2597,7 +2693,7 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 				int shiftBits = Utils.isPowerOf2(addrInstProperties.getMaxRegWordWidth())? Utils.getBits(addrInstProperties.getMaxRegWordWidth()) : 0;
 				int newAddrWidth = addrInstProperties.getExtAddressWidth() - shiftBits;
 				int newLowBit = addrInstProperties.getExtLowBit() + shiftBits;
-				this.addSimpleVectorTo(SystemVerilogBuilder.HW, decodeToHwAddrName, 0, newAddrWidth); 
+				this.addHwVector(DefSignalType.D2H_ADDR, 0, newAddrWidth);
 				String arrayStr = (addrInstProperties.getExtAddressWidth()>1)? SystemVerilogSignal.genRefArrayString(newLowBit, newAddrWidth) : "";
 				this.addWireAssign(decodeToHwAddrName + " = " + extIf.decodeToHwAddrName + arrayStr + ";");  
 			    //System.out.println("SystemVerilogDecodeModule generateExternalInterface_PARALLEL: " + addrInstProperties.getId() + ", reps=" + addrInstProperties.getRepCount()+ ", regbwidth=" + addrInstProperties.getMaxRegByteWidth() + ", shiftBits=" + shiftBits );
@@ -2615,7 +2711,7 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 	    // otherwise use basic parallel interface
 	    else {
 	    	// add nack input
-			this.addSimpleScalarFrom(SystemVerilogBuilder.HW, hwToDecodeNackName); 
+			this.addHwScalar(DefSignalType.H2D_NACK);
 
 			// create internal interface signals 
 			this.addScalarWire(extIf.hwToDecodeAckName);
@@ -2626,15 +2722,15 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 		
 			// if size of external range is greater than one reg we'll need an external address  
 			if (extIf.hasAddress) {  
-				this.addSimpleVectorTo(SystemVerilogBuilder.HW, decodeToHwAddrName, addrInstProperties.getExtLowBit(), addrInstProperties.getExtAddressWidth()); 
+				this.addHwVector(DefSignalType.D2H_ADDR, addrInstProperties.getExtLowBit(), addrInstProperties.getExtAddressWidth());
 				this.addWireAssign(decodeToHwAddrName + " = " + extIf.decodeToHwAddrName +  ";");  
 			}
 
 			// if size of max pio transaction is greater than one word need to add transaction size/retry info 
 			if (extIf.hasSize) { 
-				this.addSimpleVectorTo(SystemVerilogBuilder.HW, decodeToHwTransactionSizeName, 0, Utils.getBits(addrInstProperties.getMaxRegWordWidth()));     
+				this.addHwVector(DefSignalType.D2H_SIZE, 0, Utils.getBits(addrInstProperties.getMaxRegWordWidth()));
 				this.addWireAssign(decodeToHwTransactionSizeName + " = " + extIf.decodeToHwTransactionSizeName +  ";");
-				this.addSimpleVectorFrom(SystemVerilogBuilder.HW, hwToDecodeTransactionSizeName, 0, Utils.getBits(addrInstProperties.getMaxRegWordWidth()));     
+				this.addHwVector(DefSignalType.H2D_RETSIZE, 0, Utils.getBits(addrInstProperties.getMaxRegWordWidth()));
 				this.addVectorWire(extIf.hwToDecodeTransactionSizeName, 0, regWordBits);
 				this.addWireAssign(extIf.hwToDecodeTransactionSizeName + " = " + hwToDecodeTransactionSizeName +  ";");
 			}	
@@ -3884,8 +3980,9 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 				   writeStmt(indentLevel, elem.getFullSignalName(DefSignalType.D2H_ADDR) + "_next = pio_dec_address_d1 " + elem.getExtAddressArrayString() + ";");  // address is resistered value from pio
 				// if data sizes are needed then add - also check for single register here and inhibit
 				if ( (elem.getMaxRegWidth() > ExtParameters.getMinDataSize())  && !elem.isSingleExtReg()) {
-				       int widthBits = Utils.getBits(elem.getMaxRegWordWidth());	   
-					   writeStmt(indentLevel, elem.getFullSignalName(DefSignalType.D2H_SIZE) + "_next = pio_dec_trans_size_d1" + SystemVerilogSignal.genRefArrayString(0, widthBits) + ";");
+				       int widthBits = Utils.getBits(elem.getMaxRegWordWidth());
+				       String extSizeIdxStr = (builder.getMaxWordBitSize()>1)? SystemVerilogSignal.genRefArrayString(0, widthBits) : "";
+					   writeStmt(indentLevel, elem.getFullSignalName(DefSignalType.D2H_SIZE) + "_next = pio_dec_trans_size_d1" + extSizeIdxStr + ";");
 				}
 			}
 			// internal reg so init enables and data
@@ -3932,7 +4029,8 @@ public class SystemVerilogDecodeModule extends SystemVerilogModule {
 					// otherwise this is a larger ext region so use size io
 					else {
 						// write the size dependent assigns
-						writeStmt(indentLevel, "reg_width" + SystemVerilogSignal.genRefArrayString(0, Utils.getBits(elem.getMaxRegWordWidth())) + " = " + elem.getFullSignalName(DefSignalType.H2D_RETSIZE) + "_d1;");  // set size for this register  
+					    String widthIdxStr = (builder.getMaxWordBitSize()>1)? SystemVerilogSignal.genRefArrayString(0, Utils.getBits(elem.getMaxRegWordWidth())) : "";
+						writeStmt(indentLevel, "reg_width" + widthIdxStr + " = " + elem.getFullSignalName(DefSignalType.H2D_RETSIZE) + "_d1;");  // set size for this register  
 						// assign write enable 
 						writeStmt(indentLevel, elem.getFullSignalName(DefSignalType.D2H_WE) + "_next = pio_write_active & ~(pio_external_ack | pio_external_nack);");		// write goes thru even if invalid				
 						writeStmt(indentLevel, "pio_external_ack_next = " + elem.getFullSignalName(DefSignalType.H2D_ACK) + "_ex;"); 

@@ -373,11 +373,15 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		   }
 		   
 		   decoder.addToDecode(regProperties);    // put external reg info on address list for decoder gen 
-		   
-		   startIOHierarchy(regProperties);  // if an interface is specified add it
 
-		   //System.out.println("SystemVerilogBuilder.addRootExternalRegisters, inst=" + regProperties.getInstancePath() + ", isAddressMap=" + regProperties.isAddressMap() + ", baseAddress=" + regProperties.getBaseAddress());
-		   //System.out.println("    SystemVerilogBuilder.addRootExternalRegisters, regset inst=" + regSetProperties.getInstancePath() + ", regset isAddressMap=" + regSetProperties.isAddressMap());
+		   // for now, inhibit encap of all except PARALLEL
+		   if (!regProperties.hasExternalType(ExtType.PARALLEL) && (regProperties.useInterface() || regProperties.useStruct())) {
+			   regProperties.setUseInterface(false);regProperties.setUseStruct(false);
+			   Ordt.warnMessage("Interface and structure encaps are not currently supported on non-PARALLEL external interfaces, inst= " + regProperties.getInstancePath());
+		   }
+		   startIOHierarchy(regProperties, true);  // if an interface is specified add it with single rep override
+
+		   //System.out.println("SystemVerilogBuilder.addRootExternalRegisters, inst=" + regProperties.getInstancePath() + ", isAddressMap=" + regProperties.isAddressMap() + ", baseAddress=" + regProperties.getBaseAddress() + ", useInterface=" + regProperties.useInterface());
 		   
 		   // if an addrmap create a new VerilogBuilder at new root instance and push onto list
 		   if (ExtParameters.sysVerGenerateChildAddrmaps() && regProperties.isAddressMap()) {
@@ -565,8 +569,13 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		top.addWireDefs(intSigList.getSignalList(LOGIC, DECODE));
 	}
 	
-	/** add IO hierarchy level */
-	private void startIOHierarchy(InstanceProperties properties) {
+	/** add IO hierarchy level
+	 * @param properties - InstanceProperties that will be used for name definition, etc
+	 * @param singleRep - if true, only a single rep of hierarchy level will be added to IO (overrides instance repCount)
+	 */
+	private void startIOHierarchy(InstanceProperties properties, boolean singleRep) {
+		// use repCount override if specified
+		int reps = singleRep? 1 : properties.getRepCount();
 		// if an interface, push intf type onto IO stack
 		if ((properties.useInterface() || properties.useStruct()) && !properties.isRootInstance()) {
 			usesInterfaces = true;
@@ -578,10 +587,18 @@ public class SystemVerilogBuilder extends OutputBuilder {
 			String compId = properties.getExtractInstance().getRegComp().getId();
 			if ((compId != null) && compId.startsWith("aNON")) compId = null;
 			//System.out.println("SystemVerilogBuilder startIOHierarchy: " + properties.getInstancePath() + ", compId=" + compId + ", repCount=" + properties.getRepCount() + ", ExtInterfaceName=" + properties.getExtInterfaceName());
-			hwSigList.pushIOSignalSet(sType, properties.getNoRepId(), properties.getRepCount(), properties.isFirstRep(), properties.getExtInterfaceName(), compId);
+			hwSigList.pushIOSignalSet(sType, properties.getNoRepId(), reps, properties.isFirstRep(), properties.getExtInterfaceName(), compId);
 		}	
 		// otherwise a non-interface hierarchy level
-		else hwSigList.pushIOSignalSet(DefSignalType.SIGSET, properties.getNoRepId(), properties.getRepCount(), properties.isFirstRep(), null, null);
+		else {
+			hwSigList.pushIOSignalSet(DefSignalType.SIGSET, properties.getNoRepId(), reps, properties.isFirstRep(), null, null);
+			//System.out.println("SystemVerilogBuilder startIOHierarchy: SIGSET: " + properties.getInstancePath() + ", reps=" + reps + ", ExtInterfaceName=" + properties.getExtInterfaceName());
+		}
+	}
+	
+	/** add IO hierarchy level (no singleRep override) */
+	private void startIOHierarchy(InstanceProperties properties) {
+		startIOHierarchy(properties, false);
 	}
 
 	/** close out active IO hierarchy level */
@@ -760,15 +777,11 @@ public class SystemVerilogBuilder extends OutputBuilder {
 	@Override
 	public void write(String outName, String description, String commentPrefix) {		
 		// before starting write, check that this addrmap is valid
-		//int mapSize = this.getMapAddressWidth();
-		//if (mapSize < 1) Ordt.errorExit("Minimum allowed address map size is " + (this.getMinRegByteWidth() * 2) + "B (addrmap=" + getAddressMapName() + ")");
 		if (decoder.getDecodeList().isEmpty()) Ordt.errorExit("Minimum allowed address map size is " + this.getMinRegByteWidth() + "B (addrmap=" + getAddressMapName() + ")");
-		//System.out.println("SystemVerilogBuilder write: Minimum allowed address map size is " + (this.getMinRegByteWidth() * 2) + "B, mapSize=" + mapSize + " (addrmap=" + getAddressMapName() + ")");
 
 		// determine if a single output file or multiple
 		boolean multipleOutputFiles = outName.endsWith("/");
    	    
-		//genPioInterfaceSignals();   // add the pio interface and internal decoder signals
 		//addressRanges.list();                     
 		addressRanges.writeGapComments();
 
@@ -779,23 +792,33 @@ public class SystemVerilogBuilder extends OutputBuilder {
 	   	    String extension = legacyVerilog? ".v" : ".sv";
 	   	    
 			// write the top level module
-			writeTop(outName + getModuleName() + "_pio" + extension, description, commentPrefix);
+			writeModuleToFile(top, outName + getModuleName() + "_pio" + extension, description, commentPrefix);
 
 			// write the logic module
-			writeLogic(outName + getModuleName() + "_jrdl_logic" + extension, description, commentPrefix);
+			logic.setInhibitCoverageOutput(ExtParameters.sysVerGenerateDvBindModules());  // no coverpoints output if using bind modules
+			writeModuleToFile(logic, outName + getModuleName() + "_jrdl_logic" + extension, description, commentPrefix);
 			
 			// write the decode module
-			writeDecode(outName + getModuleName() + "_jrdl_decode" + extension, description, commentPrefix);
+			writeModuleToFile(decoder, outName + getModuleName() + "_jrdl_decode" + extension, description, commentPrefix);
 			
 			// if IO interfaces are used, generate the interfaces and wrapper
 			if ((usesInterfaces || ExtParameters.sysVerGenerateWrapperModule()) && !legacyVerilog) {
-				writeInterfaces(outName + getModuleName() + "_pio_interfaces.sv", description, commentPrefix);
+				writeWrapperEncapDefines(outName, getModuleName() + "_pio_interfaces.sv", description, commentPrefix);
 				writeTopWrapperModules(true, true, outName, getModuleName() + "_pio_iwrap", ".sv", description, commentPrefix);
 			}
 			// verilog wrapper
 			else if (ExtParameters.sysVerGenerateWrapperModule() && legacyVerilog) {
 				writeTopWrapperModules(false, true, outName, getModuleName() + "_pio_iwrap", ".v", description, commentPrefix);
 				//System.out.println("SystemVerilogBuilder write:   ExtParameters.sysVerilogAlwaysGenerateIwrap()= " + ExtParameters.sysVerilogAlwaysGenerateIwrap());
+			}
+			
+			// write dv bind modules
+			if (ExtParameters.sysVerGenerateDvBindModules() && !legacyVerilog) {
+				SystemVerilogModule intrBindMod = logic.createIntrBindModule();
+				writeModuleToFile(intrBindMod, outName + getModuleName() + "_jrdl_logic_intr_bind.sv", description, commentPrefix);
+				// create a coverage bind file
+				SystemVerilogModule coverBindMod = logic.createCoverBindModule();
+				if (coverBindMod != null) writeModuleToFile(coverBindMod, outName + getModuleName() + "_jrdl_logic_cover_bind.sv", description, commentPrefix);
 			}
 			
 			// loop through nested addrmaps and write these VerilogBuilders
@@ -822,11 +845,11 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		}
 	}
 	
-	/** write top module output to specified output file  
+	/** write module statements to specified output file.  File is opened/created on entry and closed on return.  
 	 * @param outName - output file or directory
 	 * @param description - text description of file generated
 	 * @param commentPrefix - comment chars for this file type */
-	public void writeTop(String outName, String description, String commentPrefix) {
+	public void writeModuleToFile(SystemVerilogModule mod, String outName, String description, String commentPrefix) {
     	BufferedWriter bw = openBufferedWriter(outName, description);
     	if (bw != null) {
     		// set bw as default
@@ -836,66 +859,35 @@ public class SystemVerilogBuilder extends OutputBuilder {
     		writeHeader(commentPrefix);
     		
     		// now write the output
-	    	top.write();
-    		closeBufferedWriter(bw);
-    	}
-	}
-	
-	/** write logic module output to specified output file  
-	 * @param outName - output file or directory
-	 * @param description - text description of file generated
-	 * @param commentPrefix - comment chars for this file type */
-	public void writeLogic(String outName, String description, String commentPrefix) {
-    	BufferedWriter bw = openBufferedWriter(outName, description);
-    	if (bw != null) {
-    		// set bw as default
-    		bufferedWriter = bw;
-
-    		// write the file header
-    		writeHeader(commentPrefix);
-    		
-    		// now write the output
-	    	logic.write();
+	    	mod.write();
     		closeBufferedWriter(bw);
     	}
 	}
 
-	/** write decode module output to specified output file  
-	 * @param outName - output file or directory
+	/** write interface/struct defines to specified output file(s)  
+	 * @param outDirName - output directory
+	 * @param outFileName - output file
 	 * @param description - text description of file generated
 	 * @param commentPrefix - comment chars for this file type */
-	public void writeDecode(String outName, String description, String commentPrefix) {
-    	BufferedWriter bw = openBufferedWriter(outName, description);
-    	if (bw != null) {
-    		// set bw as default
-    		bufferedWriter = bw;
+	public void writeWrapperEncapDefines(String outDirName, String outFileName, String description, String commentPrefix) {
+		// if individual encap files specified
+		if (ExtParameters.sysVerSeparateIwrapEncapFiles()) writeSeparateWrapperEncapDefines(outDirName, description, commentPrefix);
+		
+		// otherwise put all encaps in one file
+		else {
+	    	BufferedWriter bw = openBufferedWriter(outDirName + outFileName, description);
+	    	if (bw != null) {
+	    		// set bw as default
+	    		bufferedWriter = bw;
 
-    		// write the file header
-    		writeHeader(commentPrefix);
-    		
-    		// now write the output
-	    	decoder.write();
-    		closeBufferedWriter(bw);
-    	}
-	}
-
-	/** write interface defines to specified output file  
-	 * @param outName - output file or directory
-	 * @param description - text description of file generated
-	 * @param commentPrefix - comment chars for this file type */
-	public void writeInterfaces(String outName, String description, String commentPrefix) {
-    	BufferedWriter bw = openBufferedWriter(outName, description);
-    	if (bw != null) {
-    		// set bw as default
-    		bufferedWriter = bw;
-
-    		// write the file header
-    		writeHeader(commentPrefix);
-    		
-    		// now write the output
-	    	writeInterfaces();
-    		closeBufferedWriter(bw);
-    	}
+	    		// write the file header
+	    		writeHeader(commentPrefix);
+	    		
+	    		// now write the output
+		    	writeWrapperEncapDefines();
+	    		closeBufferedWriter(bw);
+	    	}
+		}
 	}
 
 	/** write wrap module and any required wrapper transform modules to specified output file(s)  
@@ -963,6 +955,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		//System.out.println("SystemVerilogBuilder write:   Decoder elements= " + decoder.getDecodeList().size());
 
 		// write the logic module
+		logic.setInhibitCoverageOutput(ExtParameters.sysVerGenerateDvBindModules());  // no coverpoints output if using bind modules
 		logic.write();   
 		
 		// write the decode module
@@ -973,7 +966,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		
 		// if IO interfaces are used, generate the systemerilog interfaces and wrapper
 		if ((usesInterfaces  || ExtParameters.sysVerGenerateWrapperModule()) && !legacyVerilog) {
-			writeInterfaces();
+			writeWrapperEncapDefines();
 			writeTopWrapperModules(true);
 		}
 		// verilog wrapper
@@ -981,6 +974,15 @@ public class SystemVerilogBuilder extends OutputBuilder {
 			writeTopWrapperModules(false);
 			//System.out.println("SystemVerilogBuilder write:   ExtParameters.sysVerilogAlwaysGenerateIwrap()= " + ExtParameters.sysVerilogAlwaysGenerateIwrap());
 		}
+		
+		// write dv bind modules
+		if (ExtParameters.sysVerGenerateDvBindModules() && !legacyVerilog) {
+			logic.createIntrBindModule().write();
+			// create a coverage bind module
+			SystemVerilogModule coverBindMod = logic.createCoverBindModule();
+			if (coverBindMod != null) coverBindMod.write();
+		}
+		
 					
 		// loop through nested addrmaps and write these VerilogBuilders
 		for (SystemVerilogBuilder childBuilder: childAddrMaps) {
@@ -988,41 +990,64 @@ public class SystemVerilogBuilder extends OutputBuilder {
 			childBuilder.write(bw);
 		}
 	}
+
+	/** write out the interface/struct defines using separate files */
+	private void writeSeparateWrapperEncapDefines(String outDirName, String description, String commentPrefix) {
+		// get a list of all sv interfaces to be defined
+		List<SystemVerilogIOSignalSet> sigSets = hwSigList.getNonVirtualSignalSets(true);		
+		// uniquify structure names if reuse option enabled (remove from sigSets list if a dup)
+		if (ExtParameters.sysVerReuseIwrapStructures()) sigSets = uniquifyWrapperEncaps(sigSets);
+		// now write the defines to separate files
+		for (SystemVerilogIOSignalSet sset : sigSets) {
+	    	BufferedWriter bw = openBufferedWriter(outDirName + sset.getType() + ".sv", description);
+	    	if (bw != null) {
+	    		// set bw as default
+	    		bufferedWriter = bw;
+	    		// write the file header
+	    		writeHeader(commentPrefix);
+	    		// now write the output
+				writeIOSignalSetDefine(sset);
+	    		closeBufferedWriter(bw);
+	    	}
+		}
+	}
 	
 	/** write out the interface/struct defines */
-	protected  void writeInterfaces() {
+	protected  void writeWrapperEncapDefines() {
 		// get a list of all sv interfaces to be defined
-		List<SystemVerilogIOSignalSet> sigSets = hwSigList.getNonVirtualSignalSets(true);
-		
-		// uniquify structure names if reuse option enabled
-		if (ExtParameters.sysVerReuseIwrapStructures()) {
-			//System.out.println("SystemVerilogBuilder writeInterfaces: found " + sigSets.size() + " structures");
-			HashMap<SystemVerilogIOSignalSet, String> uniqueStructures = new HashMap<SystemVerilogIOSignalSet, String>();
-			HashSet<String> uniqueCompIds = new HashSet<String>();
-			Iterator<SystemVerilogIOSignalSet> it = sigSets.iterator();
-			while(it.hasNext()) {
-				SystemVerilogIOSignalSet sset = it.next();
-				// if a duplicate of an existing structure, use the existing structure's type
-				if (uniqueStructures.containsKey(sset)) {
-					sset.setType(uniqueStructures.get(sset));  // replace type for this sigset
-					it.remove();  // remove this sigset from the list needing defines
-					//System.out.println("   " + sset.getType() + " is a dup of compId=" + uniqueStructures.get(sset));
-				}
-				// otherwise this is a new unique structure
-				else {
-					String newType = sset.getCompIdType(); // get structure name based on component id
-					String uniqueType = ((sset.getCompId()!=null) && !uniqueCompIds.contains(newType))? newType : sset.getType();  // use newType if it is unique
-					uniqueStructures.put(sset, uniqueType);
-					uniqueCompIds.add(uniqueType);  // save the new structure name to insure it isnt reused
-					sset.setType(uniqueType);  // replace type for this sigset
-					//System.out.println("   " + sset.getType() + " is new, compId=" + uniqueType);
-				}
-			}
-			//System.out.println("SystemVerilogBuilder writeInterfaces: found " + sigSets.size() + " unique structures");
-		}
-		
+		List<SystemVerilogIOSignalSet> sigSets = hwSigList.getNonVirtualSignalSets(true);		
+		// uniquify structure names if reuse option enabled (remove from sigSets list if a dup)
+		if (ExtParameters.sysVerReuseIwrapStructures()) sigSets = uniquifyWrapperEncaps(sigSets);
 		// now write the defines
 		for (SystemVerilogIOSignalSet sset : sigSets) writeIOSignalSetDefine(sset);
+	}
+
+	/** uniquify structure names if reuse option enabled (remove from sigSets list if a dup) */
+	private List<SystemVerilogIOSignalSet> uniquifyWrapperEncaps(List<SystemVerilogIOSignalSet> sigSets) {
+		//System.out.println("SystemVerilogBuilder writeInterfaces: found " + sigSets.size() + " structures");
+		HashMap<SystemVerilogIOSignalSet, String> uniqueStructures = new HashMap<SystemVerilogIOSignalSet, String>();
+		HashSet<String> uniqueCompIds = new HashSet<String>();
+		Iterator<SystemVerilogIOSignalSet> it = sigSets.iterator();
+		while(it.hasNext()) {
+			SystemVerilogIOSignalSet sset = it.next();
+			// if a duplicate of an existing structure, use the existing structure's type
+			if (uniqueStructures.containsKey(sset)) {
+				sset.setType(uniqueStructures.get(sset));  // replace type for this sigset
+				it.remove();  // remove this sigset from the list needing defines
+				//System.out.println("   " + sset.getType() + " is a dup of compId=" + uniqueStructures.get(sset));
+			}
+			// otherwise this is a new unique structure
+			else {
+				String newType = sset.getCompIdType(); // get structure name based on component id
+				String uniqueType = ((sset.getCompId()!=null) && !uniqueCompIds.contains(newType))? newType : sset.getType();  // use newType if it is unique
+				uniqueStructures.put(sset, uniqueType);
+				uniqueCompIds.add(uniqueType);  // save the new structure name to insure it isnt reused
+				sset.setType(uniqueType);  // replace type for this sigset
+				//System.out.println("   " + sset.getType() + " is new, compId=" + uniqueType);
+			}
+		}
+		//System.out.println("SystemVerilogBuilder uniquifyWrapperEncaps: found " + sigSets.size() + " unique encap types");
+		return sigSets;
 	}
 
 	/** write out an interface define */
