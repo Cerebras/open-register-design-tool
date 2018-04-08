@@ -13,3 +13,5 @@ The tool can generate several outputs from SystemRDL or JSpec, including:
 
 Easiest way to get started with ordt is to download a runnable jar from the [release area](https://github.com/Juniper/open-register-design-tool/releases).  
 Ordt documentation can be found [here](https://github.com/Juniper/open-register-design-tool/wiki).
+
+To build ordt using gradle, run `./gradlew shadowJar`. The jar file is generated in build/libs/. To clean, use the target clean or distclean.
