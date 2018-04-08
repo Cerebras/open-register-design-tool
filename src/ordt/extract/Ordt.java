@@ -30,7 +30,7 @@ import ordt.parameters.ExtParameters.UVMModelModes;
 
 public class Ordt {
 
-	private static String version = "180406.01-crb01"; 
+	private static String version = "180408.01-crb";
 	private static DebugController debug = new MyDebugController(); // override design annotations, input/output files
 
 	public enum InputType { RDL, JSPEC };
