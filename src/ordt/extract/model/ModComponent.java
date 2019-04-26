@@ -14,6 +14,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import ordt.annotate.AnnotateCommand;
+import ordt.output.common.MsgUtils;
 import ordt.extract.Ordt;
 import ordt.extract.PropertyList;
 import ordt.extract.RegNumber;
@@ -29,9 +30,8 @@ public abstract class ModComponent extends ModBaseComponent {
 	protected List<ModEnum> enums;   // enums contained in this component
 	protected CompParameterLists postPropertyAssignLists;  // list of post property assignments for descendent instances  
 	protected boolean isRoot = false;   // root component
-	public enum CompType { DEFAULT, ADDRMAP, REG, REGSET, FIELD, FIELDSET }  // subset of comp types used for annotation check and addrmap indication
+	public enum CompType { DEFAULT, ADDRMAP, REG, REGSET, FIELD, FIELDSET, SIGNAL }  // subset of comp types used for annotation check and addrmap indication
 	protected CompType compType = CompType.DEFAULT;
-	protected RegNumber alignedSize;   // size of this component in bytes assuming js alignment rules (used for addr alignment)
 	
 	protected ModComponent() {
 		childComponents = new ArrayList<ModComponent>();
@@ -111,7 +111,7 @@ public abstract class ModComponent extends ModBaseComponent {
 	public void display () {
 			String parID = "";
 			if (parent != null) parID = parent.getId();
-			System.out.println("\n---------" + this.getClass() + "   id=" + getFullId() + "   parent=" + parID + "   root=" + isRoot + "   compType=" + compType + "   alignedsize=" + alignedSize); 
+			System.out.println("\n---------" + this.getClass() + "   id=" + getFullId() + "   parent=" + parID + "   root=" + isRoot + "   compType=" + compType); 
 			// display components
 			System.out.println("    child components:");
 			for (ModComponent comp: childComponents) {
@@ -168,6 +168,11 @@ public abstract class ModComponent extends ModBaseComponent {
 		return (compType == CompType.FIELD);
 	}
 
+	/** return true if this component is tagged as a signal */
+	public boolean isSignal() {
+		return (compType == CompType.SIGNAL);
+	}
+
 	/** return true if this component is tagged as a fieldset */
 	public boolean isFieldSet() {
 		return (compType == CompType.FIELDSET);
@@ -197,13 +202,18 @@ public abstract class ModComponent extends ModBaseComponent {
 		return compType;
 	}
 
-	/** return regnumber containing size in bytes of this component assuming js alignment rules */
+	/** return regnumber containing size in bytes of this component assuming js alignment rules - overridden in ModRegSet, ModRegister*/
 	public RegNumber getAlignedSize() {
-		return alignedSize;
+		return null;
 	}
 
 	/** default setAlignedSize - overridden in ModRootComponent, ModRegSet, ModRegister, precompute the size of registers/regsets prior to output generation */
 	public void setAlignedSize(int defaultRegWidth) {
+	}
+
+	/** return integer containing size in bits of max register in this component - overridden in ModRegSet, ModRegister*/
+	public Integer getMaxRegWidth() {
+		return null;
 	}
 
 	/** default sortRegisters - overridden in ModRootComponent, ModRegSet */
@@ -275,7 +285,7 @@ public abstract class ModComponent extends ModBaseComponent {
 	 *  @param ModComponent to add as child
 	 */
 	public void addChildComponent(ModComponent regComp) {
-		if (findLocalCompDef(regComp.getId()) != null) Ordt.errorMessage("Duplicate component (" + regComp.getId() + ") declared in component " + getId());
+		if (findLocalCompDef(regComp.getId()) != null) MsgUtils.errorMessage("Duplicate component (" + regComp.getId() + ") declared in component " + getId());
 		childComponents.add(regComp);		
 	}
 	
@@ -297,7 +307,7 @@ public abstract class ModComponent extends ModBaseComponent {
 	 *  @param component instance to add as child
 	 */
 	public void addCompInstance(ModInstance regInst) {
-		if (findLocalInstance(regInst.getId()) != null) Ordt.errorMessage("Duplicate instance (" + regInst.getId() + ") declared in component " + getId());
+		if (findLocalInstance(regInst.getId()) != null) MsgUtils.errorMessage("Duplicate instance (" + regInst.getId() + ") declared in component " + getId());
 		getChildInstances().add(regInst);		
 	}
 
@@ -305,7 +315,7 @@ public abstract class ModComponent extends ModBaseComponent {
 	 *  @param regenum to add as child
 	 */
 	public void addCompEnum(ModEnum regEnum) {
-		if (findLocalEnum(regEnum.getId()) != null) Ordt.errorMessage("Duplicate enum (" + regEnum.getId() + ") declared in component " + getId());
+		if (findLocalEnum(regEnum.getId()) != null) MsgUtils.errorMessage("Duplicate enum (" + regEnum.getId() + ") declared in component " + getId());
 		enums.add(regEnum);		
 	}
 	
@@ -375,8 +385,8 @@ public abstract class ModComponent extends ModBaseComponent {
 		return null;
 	}
 
-	/** search for an instance in local scope having specified path 
-	 *  @param list containing instance path 
+	/** search for an instance in local scope having specified path. note: method is destructive to input list. 
+	 *  @param instances - list containing instance path element names 
 	 */
 	public ModInstance findInstance(List<String> instances) {   
 		//System.out.println("ModComponent findInstance: *** looking for inst=" + instances + " in " + this.getId() + ", path depth=" + instances.size());
@@ -392,7 +402,27 @@ public abstract class ModComponent extends ModBaseComponent {
 		// if no more instances in path we're done so exit
 		if (instances.size()==0) return regInst;  
 		// otherwise get the next instance recursively
-		return regInst.getRegComp().findInstance(instances);
+		return regInst.getRegComp().findInstance(instances);   // TODO
+	}
+
+	/** return the last addrmap instance along specified path. note: method is destructive to input list. 
+	 *  @param instances - list containing instance path element names 
+	 */
+	public ModInstance findLastAddrmap(List<String> instances) {
+		//System.out.println("ModComponent findLastAddrmap: *** looking for inst=" + instances + " in " + this.getId() + ", path depth=" + instances.size());
+		if (instances.size()<1) return null;
+		// get first path in the list
+		String baseInstName = instances.remove(0);
+		// search for this instance locally
+		ModInstance regInst = findLocalInstance(baseInstName);
+		if (regInst == null) return null;
+		boolean isAddrmap = regInst.getRegComp().isAddressMap();
+		// if no more instances in path we're done so exit
+		if (instances.size()==0) return isAddrmap? regInst : null;
+		// otherwise get the next instance recursively
+		ModInstance childMapInstance = regInst.getRegComp().findLastAddrmap(instances);
+		return (childMapInstance != null)? childMapInstance : isAddrmap? regInst : null; // if addrmap found later in path return it
+			
 	}
 
 	/** recursively search for a enum of specified name
@@ -645,7 +675,6 @@ public abstract class ModComponent extends ModBaseComponent {
 	public int hashCode() {
 		final int prime = 31;
 		int result = super.hashCode();
-		result = prime * result + ((alignedSize == null) ? 0 : alignedSize.hashCode());
 		//result = prime * result + ((childComponents == null) ? 0 : childComponents.hashCode());
 		result = prime * result + ((getChildInstances() == null) ? 0 : getChildInstances().hashCode());
 		result = prime * result + ((compType == null) ? 0 : compType.hashCode());
@@ -665,11 +694,6 @@ public abstract class ModComponent extends ModBaseComponent {
 		if (getClass() != obj.getClass())
 			return false;
 		ModComponent other = (ModComponent) obj;
-		if (alignedSize == null) {
-			if (other.alignedSize != null)
-				return false;
-		} else if (!alignedSize.equals(other.alignedSize))
-			return false;
 		//if (childComponents == null) {
 		//	if (other.childComponents != null)
 		//		return false;
@@ -696,6 +720,5 @@ public abstract class ModComponent extends ModBaseComponent {
 			return false;
 		return true;
 	}
-
 
 }

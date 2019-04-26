@@ -1,12 +1,12 @@
-package ordt.output.systemverilog.io;
+package ordt.output.systemverilog.common.io;
 
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 
+import ordt.output.common.MsgUtils;
 import ordt.output.systemverilog.common.RemapRuleList;
 import ordt.output.systemverilog.common.wrap.SystemVerilogWrapModule.WrapperSignalMap;
-import ordt.parameters.Utils;
 
 public class SystemVerilogIOSignalSet extends SystemVerilogIOElement {
 	enum SignalSetType {SIGNALSET, INTERFACE, STRUCT}
@@ -45,20 +45,21 @@ public class SystemVerilogIOSignalSet extends SystemVerilogIOElement {
 			boolean uniqueOK = (uniqueList==null) || !uniqueList.contains(childName);  // uniqueness match
 			String newChildName = rules.getRemappedName(childName, null, elem.getFrom(), elem.getTo(), true); // test for rules match
 			boolean rulesMatch = newChildName != null; // rules match
+			//if (childName.contains("lsb_field")) System.out.println("SystemVerilogIOSignalSet : childName=" + childName + ", uniqueOK=" + uniqueOK + ", rulesMatch=" + rulesMatch + ", elem.isSignalSet()=" + elem.isSignalSet() + ", elem.isVirtual()=" + elem.isVirtual());
 			// if virtual, add this set w/o checking rules
 			if (elem.isVirtual() && uniqueOK) { 
 				childList.add(((SystemVerilogIOSignalSet) elem).createCopy(rules, uniqueList, childName));  // create a copy of this IOSignalSet or child type
-				if (uniqueList!=null) uniqueList.add(childName);
+				//uniqueList.add(childName);  // do not add to list if virtual
 			}
 			// if non-virtual, add if a rule match
 			else if (elem.isSignalSet() && rulesMatch && uniqueOK) {
 				childList.add(((SystemVerilogIOSignalSet) elem).createCopy(rules, uniqueList, childName));  // create a copy of this IOSignalSet or child type
-				if (uniqueList!=null) uniqueList.add(childName);
+				uniqueList.add(childName);
 			}
 			// if a signal, add if a rule match
 			else if (!elem.isSignalSet() && rulesMatch && uniqueOK) {
 				childList.add(elem);
-				if (uniqueList!=null) uniqueList.add(childName);
+				uniqueList.add(childName);
 			}
 		}
 	}
@@ -111,12 +112,29 @@ public class SystemVerilogIOSignalSet extends SystemVerilogIOElement {
 		this.addVector(from, to, namePrefix, name, 0, 1);
 	}
 	
-	/** add a new vector signal to the child list 
-	 */
-	protected void addVector(Integer from, Integer to, String namePrefix, String name, int lowIndex, int size) {
-		SystemVerilogIOSignal sig = new SystemVerilogIOSignal(from, to, namePrefix, name, lowIndex, size);
+	/** add a new vector signal to the child list  */
+	protected void addVector(Integer from, Integer to, String namePrefix, String name, int lowIndex, int size, boolean signed) {
+		SystemVerilogIOSignal sig = new SystemVerilogIOSignal(from, to, namePrefix, name, lowIndex, size, signed);
 		childList.add(sig);
 		//System.out.println("SystemVerilogIOSignalSet addVector: adding " + name + " to set " + getName());
+	}
+	
+	/** add a new unsigned vector signal to the child list  */
+	protected void addVector(Integer from, Integer to, String namePrefix, String name, int lowIndex, int size) {
+		addVector(from, to, namePrefix, name, lowIndex, size, false);
+	}
+
+	/** add a new vector signal with freeform slice string to the child list  */
+	public void addVector(Integer from, Integer to, String namePrefix, String name, String slice) {
+		SystemVerilogIOSignal sig = new SystemVerilogIOSignal(from, to, namePrefix, name, slice);
+		childList.add(sig);
+		//System.out.println("SystemVerilogIOSignalSet addVector: adding " + name + " to set " + getName());
+	}
+	
+	/** add a new simple 2d vector array with freeform slice strings to the child list */
+	public void addVectorArray(Integer from, Integer to, String namePrefix, String name, String packedSlice, String unpackedSlice) {
+		SystemVerilogIOSignal sig = new SystemVerilogIO2DSignal(from, to, namePrefix, name, packedSlice, unpackedSlice);
+		childList.add(sig);
 	}
 	
 	/** add children of another IOsignallist to this list
@@ -326,10 +344,10 @@ public class SystemVerilogIOSignalSet extends SystemVerilogIOElement {
 					//if (!isVirtual()) System.out.println("SystemVerilogIOSignalSet loadWrapperMapSources: hierName=" + hierName + ", signalName=" + signalName );
 					// if a match then add to mappings
 					if (signalName!=null) {
-						/*if (signalName.contains("info_event_int_status_intr") && (useHierSignalNames==true) && (addSources==false)) {
-							System.out.println("SystemVerilogIOSignalSet loadWrapperMapSources: useHierSignalNames=" + useHierSignalNames + ", addSources=" + addSources);
-							System.out.println("SystemVerilogIOSignalSet loadWrapperMapSources: rootName=" + rootName + ", hierName=" + hierName + ", fullHierPrefix=" + fullHierPrefix);
-							System.out.println("SystemVerilogIOSignalSet loadWrapperMapSources: signalName=" + signalName);
+						/*if (signalName.contains("reg_dflt") && (addSources==true)) {
+							System.out.println("SystemVerilogIOSignalSet loadWrapperMapInfo: --- useHierSignalNames=" + useHierSignalNames + ", addSources=" + addSources);
+							System.out.println("SystemVerilogIOSignalSet loadWrapperMapInfo: rootName=" + rootName + ", hierName=" + hierName + ", fullHierPrefix=" + fullHierPrefix);
+							System.out.println("SystemVerilogIOSignalSet loadWrapperMapInfo: signalName=" + signalName);
 						}*/
 						Integer elemLowIndex = ((SystemVerilogIOSignal) ioElem).getLowIndex();
 						Integer elemSize = ((SystemVerilogIOSignal) ioElem).getSize();
@@ -348,7 +366,7 @@ public class SystemVerilogIOSignalSet extends SystemVerilogIOElement {
 
     @Override
 	public void display(int indentLvl) {
-		System.out.println(Utils.repeat(' ', indentLvl*4) + "SystemVerilogIOSignalSet: name=" + name  + ", from=" + from + ", to=" + to + ", tagPrefix=" + tagPrefix+ ", reps=" + reps + ", signalSetType=" + signalSetType + ", childList size=" + childList.size() + ", ext type=" + type + ", hasExtType=" + hasExtType);
+		System.out.println(MsgUtils.repeat(' ', indentLvl*4) + "SystemVerilogIOSignalSet: name=" + name  + ", from=" + from + ", to=" + to + ", tagPrefix=" + tagPrefix+ ", reps=" + reps + ", signalSetType=" + signalSetType + ", childList size=" + childList.size() + ", ext type=" + type + ", hasExtType=" + hasExtType);
 	    for (SystemVerilogIOElement child : childList) child.display(indentLvl+1);				
 	}
 	

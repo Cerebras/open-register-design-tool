@@ -31,6 +31,9 @@ dependencies {
     runtime 'org.antlr:antlr4-runtime:4.5.1-1'
 }
 
+final antlrSrc = 'src/ordt/parse/grammars'
+final antlrGen = 'build/generated-src/antlr/main'
+
 // Override default srcDirs for the main source set.
 sourceSets {
     main {
@@ -39,12 +42,11 @@ sourceSets {
 		       'src/ordt/extract',
 		       'src/ordt/output',
 		       'src/ordt/parameters',
-		       //XXX There is probably a variable that contains this path.
-	               'build/generated-src/antlr/main']
+		       antlrGen ]
         }
-	antlr {
-	    srcDirs = ['src/ordt/parse/grammars']
-	}
+    	antlr {
+    	    srcDirs = [ antlrSrc ]
+    	}
     }
 }
 
@@ -55,26 +57,20 @@ sourceSets {
 // Use the distclean target to remove the local copy of MyDebugController.java.
 task copyMyDebugController {
     doLast {
-	if (!file('src/ordt/extract/MyDebugController.java').exists()) {
-	    exec {
-		commandLine 'cp', 'src/ordt/extract/MyDebugController.example', 
+	    if (!file('src/ordt/extract/MyDebugController.java').exists()) {
+	        exec {
+		        commandLine 'cp', 'src/ordt/extract/MyDebugController.example', 
 		            'src/ordt/extract/MyDebugController.java'
+	        }
 	    }
-	}
     }
 }
 
 compileJava.dependsOn(copyMyDebugController)
 
-// Remove extra package line in some of the generated parser files.
-// antlr outputs all @header sections when another grammar is imported.
-generateGrammarSource.doLast {
-    FileTree tree = fileTree(dir: outputDirectory, include: '**/SystemRDL*.java')
-    tree.each {File file ->
-	exec {
-	    commandLine "sed", "-i", "-e", "/package ordt\\.parse\\.parameters/d", file
-	}
-    }
+generateGrammarSource {
+    outputs.upToDateWhen { false }  // force compile of all grammar files so import dependencies are picked up
+//    outputDirectory = file(antlrGen)
 }
 
 shadowJar {
@@ -82,7 +78,7 @@ shadowJar {
     classifier = null
     
     manifest {
-	attributes 'Main-Class': 'ordt.extract.Ordt'
+	    attributes 'Main-Class': 'ordt.extract.Ordt'
     }
 
     dependencies {
@@ -96,10 +92,48 @@ shadowJar {
 
 task distclean {
     dependsOn clean
-
     doLast {
-	exec {
-	    commandLine 'rm', '-f', 'src/ordt/extract/MyDebugController.java'
-	}
+	    exec {
+	        commandLine 'rm', '-f', 'src/ordt/extract/MyDebugController.java'
+	    }
     }
+}
+
+// eclipse ide expects java source files to be in directories corresponding to their package.
+// the generateEclipseGrammarSource generates the antlr output and moves output java files into 
+// their respective package directories (note that not all grammars need to be copied)
+task generateEclipseGrammarSource {
+    dependsOn generateGrammarSource
+    doLast {
+        final destFolder = 'src'
+        moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'ExtParms', antlrGen, destFolder)
+        moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'JSpec', antlrGen, destFolder)
+        moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'SystemRDL', antlrGen, destFolder)
+        //moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'SimpleSVLexer', antlrGen, destFolder)
+        //moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'SimpleSVParser', antlrGen, destFolder)
+        moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'SimpleSV', antlrGen, destFolder)
+    }
+}
+
+def moveAntlrGeneratedFilesToTheirPackages(grammarFolder, grammarName, genFolder, destFolder) {
+    File grammarFile = file("${grammarFolder}/${grammarName}.g4")
+    final grammarPackage = extractPackageNameFromGrammerFile(grammarFile)
+    copy {
+        from genFolder
+        include "${grammarName}*.*"
+        into destFolder + "/" + grammarPackage.replaceAll("\\.", "/")
+    }
+    project.delete fileTree(genFolder).include("${grammarName}*.*")
+}
+
+def extractPackageNameFromGrammerFile(File grammarFile) {
+    def grammarPackage = "unknown.package"
+    def packageRegex = ~/[ ]*package[ ]*([a-zA-Z]+[a-zA-Z0-9.-_]*)[ ]*;/
+    grammarFile.eachLine { line ->
+        def matcher = packageRegex.matcher(line)
+        if (matcher.find()){
+            grammarPackage = matcher.group(1)
+        }
+    }
+    return grammarPackage
 }

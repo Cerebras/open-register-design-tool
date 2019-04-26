@@ -11,7 +11,8 @@ import java.util.List;
 import ordt.extract.RegModelIntf;
 import ordt.output.FieldProperties;
 import ordt.output.OutputBuilder;
-import ordt.output.OutputLine;
+import ordt.output.RhsReference;
+import ordt.output.common.OutputLine;
 import ordt.parameters.ExtParameters;
 
 /**
@@ -32,6 +33,7 @@ public class RegListBuilder extends OutputBuilder {  // TODO handle alias fields
 	    setVisitEachRegSet(true);   // gen code for each reg set
 	    setVisitExternalRegisters(ExtParameters.reglistDisplayExternalRegs());  //visit externals also?
 	    setVisitEachExternalRegister(true);	    // treat external regs exactly as internals
+		RhsReference.setInstancePropertyStack(instancePropertyStack);  // update pointer to the instance stack for rhs reference evaluation
 		model.getRoot().generateOutput(null, this);   // generate output structures recursively starting at model root
 	}
 	

@@ -11,20 +11,18 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import ordt.extract.Ordt;
+import ordt.output.common.MsgUtils;
 import ordt.extract.RegModelIntf;
 import ordt.extract.RegNumber;
 import ordt.extract.RegNumber.NumBase;
 import ordt.extract.RegNumber.NumFormat;
 import ordt.output.systemverilog.common.RemapRuleList;
 import ordt.output.systemverilog.common.RemapRuleList.RemapRuleType;
+import ordt.output.systemverilog.common.io.SystemVerilogIOElement;
+import ordt.output.systemverilog.common.io.SystemVerilogIOSignal;
+import ordt.output.systemverilog.common.io.SystemVerilogIOSignalList;
 import ordt.output.systemverilog.common.SystemVerilogModule;
 import ordt.output.systemverilog.common.SystemVerilogSignal;
-import ordt.output.systemverilog.io.SystemVerilogIOElement;
-//import ordt.output.systemverilog.oldio.SystemVerilogIOSignal;
-//import ordt.output.systemverilog.oldio.SystemVerilogIOSignalList;
-import ordt.output.systemverilog.io.SystemVerilogIOSignal;
-import ordt.output.systemverilog.io.SystemVerilogIOSignalList;
 import ordt.parameters.ExtParameters;
 import ordt.parameters.ExtParameters.SVDecodeInterfaceTypes;
 
@@ -34,8 +32,8 @@ public class SystemVerilogTestBuilder extends SystemVerilogBuilder {
 	protected SystemVerilogIOSignalList benchSigList = new SystemVerilogIOSignalList("bench");   // signals specific to the bench
 	protected SystemVerilogIOSignalList primaryBfmToDecoderSigList = new SystemVerilogIOSignalList("primary bfm - decode");   // signals specific to the bench
 	// module defines  
-	protected SystemVerilogModule primaryBfm = new SystemVerilogModule(this, PIO, defaultClk, getDefaultReset());  // primary pio interface bfm
-	protected SystemVerilogModule benchtop = new SystemVerilogModule(this, 0, defaultClk, getDefaultReset());  // bench top module
+	protected SystemVerilogModule primaryBfm = new SystemVerilogModule(this, PIO, defaultClk, getDefaultReset(), ExtParameters.sysVerUseAsyncResets());  // primary pio interface bfm
+	protected SystemVerilogModule benchtop = new SystemVerilogModule(this, 0, defaultClk, getDefaultReset(), ExtParameters.sysVerUseAsyncResets());  // bench top module
 
 	public SystemVerilogTestBuilder(RegModelIntf model) {
 		super(model);
@@ -53,7 +51,7 @@ public class SystemVerilogTestBuilder extends SystemVerilogBuilder {
 		bufferedWriter = bw;
 
 		// before starting write, check that this addrmap is valid
-		if (decoder.getDecodeList().isEmpty()) Ordt.errorExit("Minimum allowed address map size is " + this.getMinRegByteWidth() + "B (addrmap=" + getAddressMapName() + ")");
+		if (decoder.getDecodeList().isEmpty()) MsgUtils.errorExit("Minimum allowed address map size is " + this.getMinRegByteWidth() + "B (addrmap=" + getAddressMapName() + ")");
 				
 		// set bufferedwriter in all child builders so we can write to same file
 		setChildBufferedWriters(bw);
@@ -309,7 +307,7 @@ public class SystemVerilogTestBuilder extends SystemVerilogBuilder {
 			}
 			
 			//System.out.println(this);
-			if (!isValid()) Ordt.warnMessage("invalid test command found: " + cmdStr);
+			if (!isValid()) MsgUtils.warnMessage("invalid test command found: " + cmdStr);
 		}
 
 		public void addStatements() {
@@ -380,7 +378,7 @@ public class SystemVerilogTestBuilder extends SystemVerilogBuilder {
 		   	benchtop.addStatement("always @(*)");
 		   	benchtop.addStatement("   gclk = CLK & delayed_gclk_enable;");
 		   	benchtop.addStatement("always @(posedge CLK)");
-		   	benchtop.addStatement("   delayed_gclk_enable <= #1 gclk_enable;");
+		   	benchtop.addStatement("   delayed_gclk_enable <= " + ExtParameters.sysVerSequentialAssignDelayString() + "gclk_enable;");
 		}
 		else {
 		   	// generate clocks
@@ -498,7 +496,7 @@ public class SystemVerilogTestBuilder extends SystemVerilogBuilder {
 		// create parallel or leaf type bfm
     	if (ExtParameters.getSysVerRootDecoderInterface()==SVDecodeInterfaceTypes.PARALLEL) createParallelBfm();
     	else if (ExtParameters.getSysVerRootDecoderInterface()==SVDecodeInterfaceTypes.LEAF) createLeafBfm();
-    	else Ordt.errorExit("Testbench does not support " + ExtParameters.getSysVerRootDecoderInterface().name() + " root interface type.");
+    	else MsgUtils.errorExit("Testbench does not support " + ExtParameters.getSysVerRootDecoderInterface().name() + " root interface type.");
 	}
 
 	/** create the parallel bfm module */   

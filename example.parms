@@ -6,13 +6,12 @@ global {
 	//suppress_alignment_warnings = true   // inhibit register/regfile base address alignment messages
 	//default_base_map_name = "zt"   // default address map name (replaces 'default_name' in cases where no addrmap is specified)
 	//debug_mode = "mode1 mode2"       // debug options
-	allow_unordered_addresses = true   // attempt to correct order of elements defined in non-descending order
+	allow_unordered_addresses = false   // attempt to correct order of elements defined in non-descending order
 }
 
 // jspec input parameters
 input jspec {
 	root_regset_is_addrmap = true   // root component will be created as an addrmap rather than a regfile/regset
-	//root_is_external_decode = true   // root=true will be converted to external_decode property?
 	//process_typedef = "ea_fo"   // process this typedef 
 }
 
@@ -56,14 +55,16 @@ output systemverilog {
     //write_enable_size = 0          // size of data affected by each write enable in bits
     max_internal_reg_reps = 4096     // maximum allowed replications allowed on an internal register 
     //wrapper_info {
-       //add_sync_stages "*swmod_o" 1 // add sync delays to these outputs (use default clock)
+       //add_sync_stages "*intr_o" 1 // add sync delays to these outputs (use default clock)
        //add_sync_stages "*_o" 2 newClk // add 2 stage syncronizer to these outputs w/ new clock
        //add_sync_stages "*_o" 2 newClk mySyncModule // add 2 stage syncronizer to these outputs w/ new clock and module override
     //}
     //separate_iwrap_encap_files = true // generate a separate file for each wrap encap (interface/struct) type
     generate_dv_bind_modules = true   // if true generate diagnostic dv bind modules 
     use_global_dv_bind_controls = true   // if true diagnostic dv bind module settings will be controlled by global packages 
-    include_addr_monitor = true       // generate io to monitor decoder transactions to a specified address range 
+    //include_addr_monitor = true       // generate io to monitor decoder transactions to a specified address range 
+    generate_iwrap_xform_modules = false // generate common wrapper transform modules
+    //include_sequential_assign_delays = true // include #1 delay on sequential assigns
 }
 
 // jspec output parameters
@@ -78,6 +79,11 @@ output jspec {
     keep_fset_hierarchy = true     // include fieldset hierarchy in output
 }
 
+// pydrvmod output parameters
+output pydrvmod {
+	default_tag_name = "VER_0"    // override the tag used for default model case (if not specified, root instance name is used)
+}
+
 // rdl output parameters  
 output rdl {
 	root_component_is_instanced = true   // instance the root addrmap/regset or make it a comp definition (not if multi-typedef)?
@@ -88,7 +94,7 @@ output rdl {
 // reglist output parameters
 output reglist {
 	display_external_regs = true       // include external regs in output?
-	show_reg_type = false              // show int/ext type for each reg?
+	show_reg_type = true              // show int/ext type for each reg?
 	//match_instance = "sopf_ints"           // show only regs with matching instance names
 	show_fields = false                // show field info for each reg
 }
@@ -101,15 +107,18 @@ output uvmregs {
 	max_reg_coverage_bins = 64   // limit address coverage bins for replicated regs
 	reuse_uvm_classes = false     // allow reuse of classes in model
 	//skip_no_reset_db_update = false   // bypass uvm_resource_db update for fields with no reset
-	//uvm_model_mode = lite1        // set uvm model type (heavy | lite1)
+	//uvm_model_mode = native        // set uvm model type (heavy | lite1 | native)
     //regs_use_factory = true       // registers will be created by and registered with the factory
     //use_numeric_uvm_class_names = true // block and reg class names will use unique int rather than catenated path
 	//uvm_mem_strategy = mimic_reg_api   // set uvm_mem modeling strategy (basic | block_wrapped | mimic_reg_api)
+	base_address_override = 0x82000000   // model base address override
+	use_module_path_defines = true   // use defines for setting root module paths
 }
 
 // xml output parameters
 output xml {
 	include_field_hw_info = true   // include field hw characteristics 
+	include_component_info = false   // include component type info in xml output for each instance 
 }
 
 // model annotation commands

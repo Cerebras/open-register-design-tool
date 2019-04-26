@@ -7,6 +7,7 @@ import java.util.HashSet;
 
 import ordt.extract.DefinedProperties;
 import ordt.extract.Ordt;
+import ordt.output.common.MsgUtils;
 import ordt.extract.RegNumber;
 import ordt.extract.Ordt.InputType;
 import ordt.output.OutputBuilder;
@@ -15,7 +16,9 @@ import ordt.output.RegSetProperties;
 import ordt.parameters.ExtParameters;
 
 public class ModRegSet extends ModComponent {
-	
+	protected RegNumber alignedSize;   // size of this component in bytes assuming js alignment rules (used for addr alignment)
+	private int maxRegWidth = ModRegister.defaultWidth;
+
 	protected ModRegSet() {
 		super();
 		compType = CompType.REGSET;
@@ -30,10 +33,21 @@ public class ModRegSet extends ModComponent {
 		return newInst;
 	}
 
+	/** return integer containing size in bits of this register */
+	@Override
+	public Integer getMaxRegWidth() {
+		return maxRegWidth;
+	}
+
+	/** update max reg width */
+	private void updateMaxRegWidth(Integer regWidth) {
+		if ((regWidth != null) && (regWidth>maxRegWidth)) maxRegWidth = regWidth;		
+	}
+
 	/** default check on valid property assignments - overridden by child types */
 	@Override
 	protected boolean isValidProperty(String propertyName) {
-		return DefinedProperties.isRegsetProperty(propertyName);
+		return isAddressMap()? DefinedProperties.isAddrmapProperty(propertyName) : DefinedProperties.isRegsetProperty(propertyName);
 	}
 	
 	/** default check for implicit default property assignments - overridden by child types */
@@ -57,11 +71,26 @@ public class ModRegSet extends ModComponent {
 	/** return a string representing this sub-class for messages - overridden by child types */
     @Override
 	protected String getBaseComponentTypeName() {
-		return Ordt.hasInputType(InputType.RDL)? "regfile" : "register_set";
+		return Ordt.hasInputType(InputType.RDL)? (isAddressMap()? "addrmap" : "regfile") : "register_set";
+	}
+
+	/** write info to stdout */
+	@Override
+	public void display () {
+		super.display();
+		// display reg properties
+		System.out.println("    register set properties:");
+		System.out.println("        alignedsize=" + alignedSize);
+	}
+
+	/** return regnumber containing size in bytes of this component assuming js alignment rules */
+	@Override
+	public RegNumber getAlignedSize() {
+		return alignedSize;
 	}
 	
 	/** recursively compute size of this component assuming js align rules
-	 * returned value is independent of subcomp alignment/base addr 
+	 * computed value is independent of subcomp alignment/base addr.  max register width is also stored. 
 	 */
 	@Override
 	public void setAlignedSize(int defaultRegWidth) {
@@ -75,14 +104,15 @@ public class ModRegSet extends ModComponent {
 				ModAddressableInstance childInst= (ModAddressableInstance) regInst;
 				int newDefaultRegWidth = childInst.hasDefaultProperty("regwidth") ? childInst.getDefaultIntegerProperty("regwidth") :   // use instance default if defined
 				   this.hasDefaultProperty("regwidth") ? this.getDefaultIntegerProperty("regwidth") : defaultRegWidth;  // else use current regset default if defined
-				childInst.regComp.setAlignedSize(newDefaultRegWidth);  // recursively set size of individual child component 
+				childInst.regComp.setAlignedSize(newDefaultRegWidth);  // recursively set size of individual child component
 				if (childInst.getAddress() != null) newAlignedSize = new RegNumber(childInst.getAddress());     // if child has a defined address, bump the running size
 				if (childInst.getAddressShift() != null) newAlignedSize.add(childInst.getAddressShift());     // if child has a defined address shift, bump the running size
 				if (childInst.getAddressModulus() != null) newAlignedSize.roundUpToModulus(childInst.getAddressModulus()); // if child has a defined modulus then bump size
-				RegNumber childSize = (childInst.getAddressIncrement() != null) ? new RegNumber(childInst.getAddressIncrement()) : 
-					                                                       new RegNumber(childInst.regComp.getAlignedSize());  // compute size of this instance or use increment if specified
-				childSize.multiply(childInst.getRepCount());  
+				RegNumber childSize = childInst.getAlignedSize();
 				newAlignedSize.add(childSize);
+				//if (getId().equals("yt_fabio_switch_sopcasc1")) System.out.println("ModRegSet setAlignedSize: added child " + childInst.getId() + ", size=" + childSize + ", newAlignedSize=" + newAlignedSize);
+				// use child reg sizes to set max reg size in this regset
+				updateMaxRegWidth(childInst.regComp.getMaxRegWidth());
 			}
 		}
 		newAlignedSize.setNextHighestPowerOf2();  // round size to next power of 2  
@@ -111,7 +141,7 @@ public class ModRegSet extends ModComponent {
 		int repCount = callingInst.getRepCount();  // get non-null repCount  
 		// check for replicated addrmaps
 		if (isAddressMap() && (repCount > 1)) {
-			Ordt.errorMessage("Replicated address maps are not allowed (map name = " + callingInst.getId() + ")");
+			MsgUtils.errorMessage("Replicated address maps are not allowed (map name = " + callingInst.getId() + ")");
 			repCount = 1;
 		}
 		
@@ -178,4 +208,32 @@ public class ModRegSet extends ModComponent {
 			}	
 		}
 	}
+	
+	@Override
+	// NOTE: currently used for uvm class reuse
+	public int hashCode() {
+		final int prime = 31;
+		int result = super.hashCode();
+		result = prime * result + ((alignedSize == null) ? 0 : alignedSize.hashCode());
+		return result;
+	}
+
+	@Override
+	// NOTE: currently used for uvm class reuse
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (!super.equals(obj))
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		ModRegister other = (ModRegister) obj;
+		if (alignedSize == null) {
+			if (other.alignedSize != null)
+				return false;
+		} else if (!alignedSize.equals(other.alignedSize))
+			return false;
+		return true;
+	}
+
 }

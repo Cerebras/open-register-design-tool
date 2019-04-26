@@ -14,6 +14,7 @@ import java.util.Stack;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import ordt.output.common.MsgUtils;
 import ordt.extract.Ordt;
 import ordt.extract.PropertyList;
 import ordt.extract.RegModelIntf;
@@ -23,12 +24,12 @@ import ordt.extract.RegNumber.NumFormat;
 import ordt.output.FieldProperties;
 import ordt.output.InstanceProperties;
 import ordt.output.OutputBuilder;
-import ordt.output.OutputLine;
 import ordt.output.RegProperties;
 import ordt.output.RegSetProperties;
 import ordt.output.RhsReference;
 import ordt.output.UniqueNameSet;
 import ordt.output.UniqueNameSet.UniqueNameSetInfo;
+import ordt.output.common.OutputLine;
 import ordt.output.FieldProperties.RhsRefType;
 import ordt.output.systemverilog.common.SystemVerilogFunction;
 import ordt.output.systemverilog.common.SystemVerilogTask;
@@ -78,6 +79,7 @@ public class UVMRegsBuilder extends OutputBuilder {
 	    setVisitEachRegSet(false);   // only need to call once for replicated reg set groups
 	    setVisitExternalRegisters(true);  // we will visit externals 
 	    setVisitEachExternalRegister(false);	    // handle externals as a group
+		RhsReference.setInstancePropertyStack(instancePropertyStack);  // update pointer to the instance stack for rhs reference evaluation
 	    model.getRoot().generateOutput(null, this);   // generate output structures recursively starting at model root
     }
 
@@ -311,7 +313,7 @@ public class UVMRegsBuilder extends OutputBuilder {
 		}
 		// issue warning if no category defined
 		if (!regProperties.hasCategory() && !ExtParameters.uvmregsSuppressNoCategoryWarnings()) 
-			Ordt.warnMessage("register " + regProperties.getInstancePath() + " has no category defined");
+			MsgUtils.warnMessage("register " + regProperties.getInstancePath() + " has no category defined");
 		//System.out.println("UVMBuild saveRegInfo: " + regProperties.getBaseName() + ", parent=" + parentID + ", rel addr=" + regProperties.getRelativeBaseAddress());
 	}
 	
@@ -411,7 +413,7 @@ public class UVMRegsBuilder extends OutputBuilder {
 
 		// issue warning if no category defined
 		if (includeExtendedInfo && !regProperties.hasCategory() && !ExtParameters.uvmregsSuppressNoCategoryWarnings()) 
-			Ordt.warnMessage("register " + regProperties.getInstancePath() + " has no category defined");
+			MsgUtils.warnMessage("register " + regProperties.getInstancePath() + " has no category defined");
 
 		// add the memory to the address map  (no offset if in a wrapper block)
 		String addrString = blockWrapped? "`UVM_REG_ADDR_WIDTH'h0" :
@@ -511,7 +513,8 @@ public class UVMRegsBuilder extends OutputBuilder {
 			subcompBuildList.addStatement(parentID, "  this." + escapedBlockId + "[i].configure(this, \"\");");  
 			if (regSetProperties.isAddressMap()) {
 				subcompBuildList.addStatement(parentID, "  this." + escapedBlockId + "[i].set_rdl_address_map(1);");  // tag block as an address map
-				subcompBuildList.addStatement(parentID, "  this." + escapedBlockId + "[i].set_rdl_address_map_hdl_path({`" + getParentAddressMapName().toUpperCase() + "_PIO_INSTANCE_PATH, \".pio_logic\"});");  // TODO
+				if (ExtParameters.uvmregsUseModulePathDefines()) subcompBuildList.addStatement(parentID, "  this." + escapedBlockId + "[i].set_rdl_address_map_hdl_path({`" + getParentAddressMapName().toUpperCase() + "_PIO_INSTANCE_PATH, \".pio_logic\"});");
+				else subcompBuildList.addStatement(parentID, "  // CALL THE FOLLOWING TO SET UP HDL PATHS: this." + escapedBlockId + "[i].set_rdl_address_map_hdl_path(<PIO_MODULE_INSTANCE_PATH>.pio_logic);");
 			}
 			else
 				subcompBuildList.addStatement(parentID, "  this." + escapedBlockId + "[i].set_rdl_tag($psprintf(\"" + blockId + "_%0d_\",i));");
@@ -526,7 +529,10 @@ public class UVMRegsBuilder extends OutputBuilder {
 		   subcompBuildList.addStatement(parentID, "this." + escapedBlockId + ".configure(this, \"\");"); 
 		   if (!hasInstanceNameOverride && regSetProperties.isAddressMap()) {
 				subcompBuildList.addStatement(parentID, "this." + escapedBlockId + ".set_rdl_address_map(1);");  // tag block as an address map
-				subcompBuildList.addStatement(parentID, "this." + escapedBlockId + ".set_rdl_address_map_hdl_path({`" + getParentAddressMapName().toUpperCase() + "_PIO_INSTANCE_PATH, \".pio_logic\"});");  
+				if (ExtParameters.uvmregsUseModulePathDefines()) subcompBuildList.addStatement(parentID, "this." + escapedBlockId + ".set_rdl_address_map_hdl_path({`" + getParentAddressMapName().toUpperCase() + "_PIO_INSTANCE_PATH, \".pio_logic\"});");
+				else subcompBuildList.addStatement(parentID, "// CALL THE FOLLOWING TO SET UP HDL PATHS: this." + escapedBlockId + ".set_rdl_address_map_hdl_path(<PIO_MODULE_INSTANCE_PATH>.pio_logic);");
+				if (ExtParameters.sysVerGenerateChildAddrmaps()) subcompBuildList.addStatement(parentID, "this." + escapedBlockId + ".set_rdl_tag(\"" + regSetProperties.getBaseName() + "_\");");
+				//System.out.println("UVMBuilder saveRegSetInfo: id=" + regSetProperties.getId() + ", base=" + regSetProperties.getBaseName());
 		   }
 		   else
 			   subcompBuildList.addStatement(parentID, "this." + escapedBlockId + ".set_rdl_tag(\"" + blockId + "_\");");
@@ -535,7 +541,7 @@ public class UVMRegsBuilder extends OutputBuilder {
 		   subcompBuildList.addStatement(parentID, "this." + escapedBlockId + ".build();");
 		   subcompBuildList.addStatement(parentID, "this.default_map.add_submap(this." + escapedBlockId + ".default_map, " + addrStr + ");");			
 		}		
-		//System.out.println("UVMBuild saveRegSetInfo: " + regSetProperties.getBaseName() + ", parent=" + parentID + ", rel addr=" + regSetProperties.getRelativeBaseAddress());
+		//System.out.println("UVMBuilder saveRegSetInfo: " + regSetProperties.getBaseName() + ", parent=" + parentID + ", rel addr=" + regSetProperties.getRelativeBaseAddress());
 	}
 
 	/** get the increment string for this group of regs */
@@ -1180,7 +1186,7 @@ public class UVMRegsBuilder extends OutputBuilder {
 						if (isEnable != null) {
 							String enTypeStr = isEnable ? "enable" : "mask";
 							String maskIntBitsStr = field.isMaskIntrBits()? "maskintrbits " : "";
-							Ordt.warnMessage("UVM model does not support " + maskIntBitsStr + "property assign for " + enTypeStr + "=" + eRef.getRawReference() + " in field=" + field.getInstancePath());							
+							MsgUtils.warnMessage("UVM model does not support " + maskIntBitsStr + "property assign for " + enTypeStr + "=" + eRef.getRawReference() + " in field=" + field.getInstancePath());							
 						}
 					}
 					else {
@@ -1218,7 +1224,7 @@ public class UVMRegsBuilder extends OutputBuilder {
 					if ((isEnable == null) || eRef.hasDeRef() || (eRef.getPathCount() < 2)) {  // rhs must reference a field so reflen must be >= 2
 						if (isEnable != null) {
 							String enTypeStr = isEnable ? "enable" : "mask";
-							Ordt.warnMessage("UVM model does not support property assign for " + enTypeStr + "=" + eRef.getRawReference() + " in field=" + field.getInstancePath());							
+							MsgUtils.warnMessage("UVM model does not support property assign for " + enTypeStr + "=" + eRef.getRawReference() + " in field=" + field.getInstancePath());							
 						}
 					}
 					else {
@@ -1239,7 +1245,7 @@ public class UVMRegsBuilder extends OutputBuilder {
 					else if (field.hasRef(RhsRefType.INTR)) eRef = field.getRef(RhsRefType.INTR);
 					// check for invalid form
 					if (!(eRef.hasDeRef("intr") || eRef.hasDeRef("halt")) || (eRef.getPathCount() < 1)) {  // rhs must reference a reg so reflen must be >= 1
-							Ordt.warnMessage("UVM model does not support property assign " + eRef.getRawReference() + " in field=" + field.getInstancePath());							
+							MsgUtils.warnMessage("UVM model does not support property assign " + eRef.getRawReference() + " in field=" + field.getInstancePath());							
 							//System.out.println("UVMRegsBuilder buildRegAddCallbacksFunction: eRef=" + eRef.getRegName() + ", depth=" + eRef.getDepth() );
 					}
 					else {
@@ -1494,19 +1500,21 @@ public class UVMRegsBuilder extends OutputBuilder {
 		outputList.add(new OutputLine(indentLvl, "")); 	
 		outputList.add(new OutputLine(indentLvl++, "virtual function void build();"));
 		// set access width of block to max of full addrmap by default (<MAX_REG_BYTE_WIDTH> will be replaced with final max value)
-		String byteWidthString = "<MAX_REG_BYTE_WIDTH>"; 
+		String byteWidthString = "<MAX_REG_BYTE_WIDTH>"; // FIXME - no longer need to do substitution, use pre-calculated value
 		if (mapWidthOverride != null) byteWidthString = mapWidthOverride.toString();
 		
 		// if base block then include in map with base address offset and set hdl path
 		Boolean isBaseBlock = blockId.equals("");
 		String endianness = "UVM_LITTLE_ENDIAN";
 		if (isBaseBlock) {
-			String addr = "`UVM_REG_ADDR_WIDTH" + ExtParameters.getPrimaryBaseAddress().toFormat(RegNumber.NumBase.Hex, RegNumber.NumFormat.NoLengthVerilog);
+			String addr = "`UVM_REG_ADDR_WIDTH" + (ExtParameters.hasUvmregsBaseAddressOverride()? ExtParameters.uvmregsBaseAddressOverride().toFormat(RegNumber.NumBase.Hex, RegNumber.NumFormat.NoLengthVerilog) :
+				ExtParameters.getPrimaryBaseAddress().toFormat(RegNumber.NumBase.Hex, RegNumber.NumFormat.NoLengthVerilog));
 			OutputLine oLine = new OutputLine(indentLvl, "this.default_map = create_map(\"\", " + addr + ", " + byteWidthString + ", " + endianness + ", 1);");
 			oLine.setHasTextReplacements(true);
 			outputList.add(oLine);
 			outputList.add(new OutputLine(indentLvl, "this.set_rdl_address_map(1);"));  			
-			outputList.add(new OutputLine(indentLvl, "this.set_rdl_address_map_hdl_path({`" + getParentAddressMapName().toUpperCase() + "_PIO_INSTANCE_PATH, \".pio_logic\"});"));  			
+			if (ExtParameters.uvmregsUseModulePathDefines()) outputList.add(new OutputLine(indentLvl, "this.set_rdl_address_map_hdl_path({`" + getParentAddressMapName().toUpperCase() + "_PIO_INSTANCE_PATH, \".pio_logic\"});"));  			
+			else outputList.add(new OutputLine(indentLvl, "// CALL THE FOLLOWING TO SET UP HDL PATHS: this.set_rdl_address_map_hdl_path(<PIO_MODULE_INSTANCE_PATH>.pio_logic);"));  			
 		}
 		else {
 			OutputLine oLine = new OutputLine(indentLvl, "this.default_map = create_map(\"\", 0, " + byteWidthString + ", " + endianness + ", 1);");

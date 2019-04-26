@@ -7,19 +7,22 @@ import java.io.BufferedWriter;
 import java.util.ArrayList;
 import java.util.List;
 
+import ordt.output.common.MsgUtils;
 import ordt.extract.Ordt;
 import ordt.extract.PropertyList;
 import ordt.extract.RegModelIntf;
 import ordt.extract.RegNumber;
 import ordt.extract.RegNumber.NumBase;
 import ordt.extract.RegNumber.NumFormat;
+import ordt.extract.model.ModComponent;
 import ordt.extract.model.ModEnum;
 import ordt.extract.model.ModEnumElement;
+import ordt.extract.model.ModInstance;
 import ordt.output.FieldProperties;
 import ordt.output.OutputBuilder;
-import ordt.output.OutputLine;
 import ordt.output.RhsReference;
 import ordt.output.FieldProperties.RhsRefType;
+import ordt.output.common.OutputLine;
 import ordt.output.InstanceProperties;
 import ordt.parameters.ExtParameters;
 
@@ -36,6 +39,7 @@ public class XmlBuilder extends OutputBuilder {
 	    setVisitEachRegSet(false);   // only need to call once for replicated reg set groups
 	    setVisitExternalRegisters(true);  // we will visit externals 
 	    setVisitEachExternalRegister(false);	    // handle externals as a group
+		RhsReference.setInstancePropertyStack(instancePropertyStack);  // update pointer to the instance stack for rhs reference evaluation
 	    model.getRoot().generateOutput(null, this);   // generate output structures recursively starting at model root
     }
 
@@ -49,10 +53,11 @@ public class XmlBuilder extends OutputBuilder {
 		if (textName == null) textName = fieldProperties.getPrefixedId() + " field";
 		textName = cleanXmlText(textName);
 		if (textName.length() > 255) {
-			Ordt.warnMessage("Field " + fieldProperties.getInstancePath() + " short text description exceeds 255 characters and will be truncated in xml.");
+			MsgUtils.warnMessage("Field " + fieldProperties.getInstancePath() + " short text description exceeds 255 characters and will be truncated in xml.");
 			textName = textName.substring(0, 255);
 		}
 		addXmlElement("shorttext", textName);
+		if (ExtParameters.xmlIncludeComponentInfo()) addComponentPath(fieldProperties);
 		addXmlElement("access", getFieldAccessType());
 		if (fieldProperties.isSinglePulse()) addXmlElement("singlepulse", "");
 		if (ExtParameters.xmlIncludeFieldHwInfo()) addHwInfo();  // include field hw info
@@ -103,10 +108,11 @@ public class XmlBuilder extends OutputBuilder {
 		if (textName == null) textName = regProperties.getId() + " register";
 		textName = cleanXmlText(textName);
 		if (textName.length() > 255) {
-			Ordt.warnMessage("Register " + regProperties.getInstancePath() + " short text description exceeds 255 characters and will be truncated in xml.");
+			MsgUtils.warnMessage("Register " + regProperties.getInstancePath() + " short text description exceeds 255 characters and will be truncated in xml.");
 			textName = textName.substring(0, 255);
 		}
 		addXmlElement("shorttext", textName);
+		if (ExtParameters.xmlIncludeComponentInfo()) addComponentPath(regProperties);
 		addXmlElement("baseaddr", regProperties.getFullBaseAddress().toString());
 		addXmlElement("width", regProperties.getRegWidth().toString());
 		if (regProperties.isReplicated()) {
@@ -161,10 +167,11 @@ public class XmlBuilder extends OutputBuilder {
 		if (textName == null) textName = regSetProperties.getId() + " registers";
 		textName = cleanXmlText(textName);
 		if (textName.length() > 255) {
-			Ordt.warnMessage("Register set " + regSetProperties.getInstancePath() + " short text description exceeds 255 characters and will be truncated in xml.");
+			MsgUtils.warnMessage("Register set " + regSetProperties.getInstancePath() + " short text description exceeds 255 characters and will be truncated in xml.");
 			textName = textName.substring(0, 255);
 		}
 		addXmlElement("shorttext", textName);
+		if (ExtParameters.xmlIncludeComponentInfo()) addComponentPath(regSetProperties);
 		// address
 		if (regSetProperties.isRootInstance())
 			addXmlElement("baseaddr", ExtParameters.getPrimaryBaseAddress().toString());
@@ -199,7 +206,7 @@ public class XmlBuilder extends OutputBuilder {
 	public void addRegMap() {
 		// issue warning message if non-aligned
 		if (!ExtParameters.useJsAddressAlignment())
-			Ordt.warnMessage("use of non-jspec alignment mode may cause incorrect addresses in xml model.");
+			MsgUtils.warnMessage("use of non-jspec alignment mode may cause incorrect addresses in xml model.");
 		addXmlElementStart("map", "version", Ordt.getVersion());
 		addXmlElement("id", getAddressMapName());
 		addXmlElement("baseaddr", ExtParameters.getPrimaryBaseAddress().toString());
@@ -207,20 +214,36 @@ public class XmlBuilder extends OutputBuilder {
 		if (textName == null) textName = getAddressMapName() + " registers";
 		textName = cleanXmlText(textName);
 		if (textName.length() > 255) {
-			Ordt.warnMessage("Address map " + getAddressMapName() + " short text description exceeds 255 characters and will be truncated in xml.");
+			MsgUtils.warnMessage("Address map " + getAddressMapName() + " short text description exceeds 255 characters and will be truncated in xml.");
 			textName = textName.substring(0, 255);
 		}
 		addXmlElement("shorttext", textName);
+		if (ExtParameters.xmlIncludeComponentInfo()) addComponentPath(regSetProperties);
 		if (regSetProperties.getTextDescription() != null) 
 			addXmlElement("longtext", wrapXmlText(regSetProperties.getTextDescription()));
 	}
 
 	@Override
 	public void finishRegMap() {
+		// if this root map has user defined properties, add them
+		addUserDefinedPropertyElements(regSetProperties);
 		addXmlElementEnd("map");
 	}
 	
 	//--------------------------------------------------------------------
+
+	/** if instance has a non-anonymous component type, then add its path to output */
+	private void addComponentPath(InstanceProperties instProperties) {
+		ModInstance inst = instProperties.getExtractInstance();
+		ModComponent comp = inst.getRegComp();
+		String cid = comp.getId();
+		// if component id is set then output path
+		if ((cid != null) && !cid.startsWith("aNON")) {
+			//System.out.println("XmlBuilder addComponentPath: cid=" + comp.getId() + ", cpath=" + comp.getFullId());
+			addXmlElement("component", cleanXmlText(comp.getFullId()));
+		}
+		
+	}
 
 	/** write new element start with an attribute/value */
 	private void addXmlElementStart(String elemName, String attrName, String attrVal) {
@@ -470,7 +493,7 @@ public class XmlBuilder extends OutputBuilder {
 		Integer encodeWidth = enumDef.getWidth();
 		//System.out.println("XmlBuilder addFieldEncodeInfo: encoding id=" + enumDef.getId() + ", enumElems=" + enumDef.getEnumElements().size());
 		if ((encodeWidth != null && encodeWidth != fieldProperties.getFieldWidth())) 
-			Ordt.errorMessage("Encoding width ("+ encodeWidth + ") does not match field width (" + fieldProperties.getFieldWidth() + ") in " + fieldProperties.getInstancePath());
+			MsgUtils.errorMessage("Encoding width ("+ encodeWidth + ") does not match field width (" + fieldProperties.getFieldWidth() + ") in " + fieldProperties.getInstancePath());
 		else {
 			for (ModEnumElement enumElem : enumDef.getEnumElements()) {
 				addXmlElementStart("enc_elem");

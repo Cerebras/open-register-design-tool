@@ -4,13 +4,18 @@
 package ordt.output;
 
 import java.util.HashMap;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-import ordt.extract.Ordt;
+import ordt.output.common.MsgUtils;
 import ordt.extract.RegNumber;
 import ordt.extract.RegNumber.NumBase;
 import ordt.extract.RegNumber.NumFormat;
 import ordt.extract.model.ModAddressableInstance;
 import ordt.extract.model.ModInstance;
+import ordt.output.systemverilog.SystemVerilogDefinedOrdtSignals;
+import ordt.output.systemverilog.SystemVerilogDefinedOrdtSignals.DefSignalType;
 import ordt.parameters.ExtParameters;
 import ordt.parameters.Utils;
 
@@ -21,7 +26,7 @@ public abstract class AddressableInstanceProperties extends InstanceProperties {
 	protected RegNumber relativeBaseAddress;   // base address of reg relative to parent
 
 	// external register group parameters
-	protected int extAddressWidth = 0;   // width of word address range for this group
+	private int extInstAddressWidth = 0;   // width of word address range for this reg/group (only includes instance size, not ancestor bits used in rep_level option)
 	protected int extLowBit = 0;  // low bit in external address range
 	
     // external/map type
@@ -50,7 +55,7 @@ public abstract class AddressableInstanceProperties extends InstanceProperties {
 		setAddressMap(oldInstance.isAddressMap());  
 		setRelativeBaseAddress(oldInstance.getRelativeBaseAddress());  
 		setBaseAddress(oldInstance.getBaseAddress());  
-		setExtAddressWidth(oldInstance.getExtAddressWidth());  
+		setExtInstAddressWidth(oldInstance.getExtAddressWidth());  
 		setExtLowBit(oldInstance.getExtLowBit());  
 	}
 	
@@ -65,6 +70,18 @@ public abstract class AddressableInstanceProperties extends InstanceProperties {
 		System.out.println("   external=" + this.externalType);  
 		System.out.println("   root external=" + this.isRootExternal());  
 		System.out.println("   is address map=" + this.isAddressMap());  		
+	}
+	
+	/** return the name for specified defined signal type using the current instance path (or alternate if rep_level is specified)
+	 *  This is a catenation of prefix, input pathStr, and suffix */
+	@Override
+	public String getFullSignalName(DefSignalType sigType) {
+		return SystemVerilogDefinedOrdtSignals.getFullName(sigType, getExtBaseName(), true);
+	}
+
+	/** return the instance path derived name including alternate ancestor names if instance has rep_level is specified */
+	public String getExtBaseName() {
+		return hasExternalRepLevel()? this.getExternalType().getRepLevelBasename() : getInstancePath().replace('.', '_');
 	}
 
 	/** get baseAddress
@@ -111,18 +128,44 @@ public abstract class AddressableInstanceProperties extends InstanceProperties {
 	public void setRelativeBaseAddress(RegNumber relativeBaseAddress) {
 		this.relativeBaseAddress = new RegNumber(relativeBaseAddress);  // use a copy, not reference;
 	}
-	/** get extAddressWidth
-	 *  @return the extAddressWidth
+	
+	// -------------
+	
+	/** get extractInstance
+	 *  @return the extractInstance
 	 */
-	public int getExtAddressWidth() {
-		return extAddressWidth;
+	@Override
+	public ModAddressableInstance getExtractInstance() {
+		return (ModAddressableInstance) extractInstance;
 	}
 
-	/** set extRegWidth
-	 *  @param extRegWidth the extRegWidth to set
+	/** return true if this instance is an addrmap
 	 */
-	public void setExtAddressWidth(int extAddressWidth) {
-		this.extAddressWidth = extAddressWidth;
+	public boolean isAddressMap() {
+		return addressMap;
+	}
+
+	/** mark this instance as an addrmap
+	 */
+	public void setAddressMap(boolean addressMap) {
+		this.addressMap = addressMap;
+	}
+	
+	// ------- external region methods
+	
+	/** returns address width of word address range for this reg/group (only includes instance size, not ancestor bits used in rep_level option) */
+	public int getExtInstAddressWidth() {
+		return extInstAddressWidth;
+	}
+	
+	/** return full address width of external region for this instance */
+	public int getExtAddressWidth() {
+		return getExtInstAddressWidth() + getExternalType().getRepLevelAddrWidth();
+	}
+
+	/** sets the address width of word address range for this reg/group (only includes instance size, not ancestor bits used in rep_level option) */
+	public void setExtInstAddressWidth(int extInstAddressWidth) {
+		this.extInstAddressWidth = extInstAddressWidth;
 	}
 
 	/** get the low bit index of external address range
@@ -148,28 +191,26 @@ public abstract class AddressableInstanceProperties extends InstanceProperties {
 	public boolean isSingleExtReg() {
 		return (isRegister() && isExternal() && (Utils.getBits(getMaxRegWordWidth()) == getExtAddressWidth()));
 	}
-	
-	/** get extractInstance
-	 *  @return the extractInstance
-	 */
-	@Override
-	public ModAddressableInstance getExtractInstance() {
-		return (ModAddressableInstance) extractInstance;
+
+	/** true if external region has an address */
+	public boolean hasExtAddress() {
+		return (getExtAddressWidth() > 0)  && !isSingleExtReg();
 	}
 
-	/** return true if this instance is an addrmap
-	 */
-	public boolean isAddressMap() {
-		return addressMap;
+	/** true if external region instance (ignoring ancestor rep_level bits) has an address */
+	public boolean hasExtInstAddress() {
+		return (getExtInstAddressWidth() > 0)  && !isSingleExtReg();
 	}
 
-	/** mark this instance as an addrmap
-	 */
-	public void setAddressMap(boolean addressMap) {
-		this.addressMap = addressMap;
+	/** true if external region has mult-word width */
+	public boolean hasExtSize() {
+		return (getMaxRegWordWidth() > 1) && !isSingleExtReg();
 	}
 
-	// -------- external/addrmap methods
+	/** true if this external instance will define rtl structures (first ancestor iteration of a rep_external region or not rep_external)  */
+	public boolean definesExtControls() {
+		return !hasExternalRepLevel() || getExternalType().isFirstRepLevelIteration();
+	}
 	
 	/** get externalType
 	 *  @return the externalType
@@ -204,17 +245,44 @@ public abstract class AddressableInstanceProperties extends InstanceProperties {
 
 	/** set external type for this instance from a string (null indicates internal) */
 	public void setExternalTypeFromString(String externalStr) {
-		if (externalStr == null) this.externalType = new ExternalType(ExtType.INTERNAL);  // internal
-		else if ("DEFAULT".equals(externalStr)) this.externalType = new ExternalType(ExtType.PARALLEL);
-		else if (externalStr.startsWith("PARALLEL")) {
-			this.externalType = new ExternalType(ExtType.PARALLEL);  
-			if (externalStr.contains("opt=")) {
-				String optMode = externalStr.substring(externalStr.indexOf('=')+1);
+		String scrubbedStr = externalStr;
+		// return as internal if null string
+		if (externalStr == null) {
+			this.externalType = new ExternalType(ExtType.INTERNAL); 
+			return;
+		}
+        // otherwise clean up string since all whitespace has been removed
+		else {
+			scrubbedStr = scrubbedStr.replace("dly=", " dly=");
+			scrubbedStr = scrubbedStr.replace("opt=", " opt=");
+			scrubbedStr = scrubbedStr.replace("rep_level=", " rep_level=");
+			scrubbedStr = scrubbedStr.replace("field_data=", " field_data=");
+			scrubbedStr = scrubbedStr.replace("_D", " dly="); // replace old parameter form
+			scrubbedStr += " ";
+		}
+		
+		// extract valid external type info
+		if ("DEFAULT".equals(externalStr)) this.externalType = new ExternalType(ExtType.PARALLEL);
+		else if (externalStr.startsWith("PARALLEL") | externalStr.startsWith("SRAM")) {
+			this.externalType = externalStr.startsWith("PARALLEL")? new ExternalType(ExtType.PARALLEL) : new ExternalType(ExtType.SRAM);
+			// extract opt
+			String optMode = extractParamFromString(scrubbedStr, "opt", false);
+			if (optMode != null) {
 				switch (optMode) {
 				case "YES" : this.externalType.addParm("optimize", 1);  break;
 				case "NO" :  this.externalType.addParm("no_optimize", 1);  break;
 				case "KEEP_NACK" : this.externalType.addParm("keep_nack", 1);  break;
 				}
+			}
+			// extract field_data
+			String fData = extractParamFromString(scrubbedStr, "field_data", false);
+			if ((fData != null) && fData.equals("YES")) this.externalType.addParm("field_data", 1);
+			// extract rep_level
+			String rLvl = extractParamFromString(scrubbedStr, "rep_level", true);
+			if (rLvl != null) {
+				Integer repLevel = Integer.valueOf(rLvl);
+				if (repLevel > 0) 
+				   this.externalType.addParm("rep_level", repLevel);  // if this parm is added, rep_level info will be collected in builder
 			}
 		}
 		else if ("EXTERNAL_DECODE".equals(externalStr)) this.externalType = new ExternalType(ExtType.EXTERNAL_DECODE);
@@ -226,65 +294,58 @@ public abstract class AddressableInstanceProperties extends InstanceProperties {
 			this.externalType = new ExternalType(ExtType.BBV5);
 			this.externalType.addParm("width", 16);
 		}
-		else if ("SRAM".equals(externalStr)) this.externalType = new ExternalType(ExtType.SRAM);
 		else if (externalStr.startsWith("SERIAL8")) {
 			int delay=0;  // default delay
-			String modStr = externalStr.replace("_D", "dly="); // replace old parameter form
-			if (modStr.contains("dly=")) delay = Integer.valueOf(modStr.substring(modStr.indexOf('=')+1));
+			String dlyStr = extractParamFromString(scrubbedStr, "dly", true);
+			if (dlyStr != null) delay = Integer.valueOf(dlyStr);
 			this.externalType = new ExternalType(ExtType.SERIAL8);
 			this.externalType.addParm("delay", delay);
 		}
 		else if (externalStr.startsWith("RING")) {
 			int delay=0;  // default delay
 			int width=16;  // default width
-			String modStr = externalStr.replace("_D", "dly="); // replace old parameter form
-			if (modStr.contains("dly=")) delay = Integer.valueOf(modStr.substring(modStr.indexOf('=')+1));
-			if (modStr.contains("RING8")) width = 8;
-			else if (modStr.contains("RING32")) width = 32;
+			String dlyStr = extractParamFromString(scrubbedStr, "dly", true);
+			if (dlyStr != null) delay = Integer.valueOf(dlyStr);
+			if (externalStr.contains("RING8")) width = 8;
+			else if (externalStr.contains("RING32")) width = 32;
 			this.externalType = new ExternalType(ExtType.RING);
 			this.externalType.addParm("width", width);
 			this.externalType.addParm("delay", delay);
 		}
-		else Ordt.errorExit("Invalid external interface type (" + externalStr + ") detected in instance " + getId());
+		else MsgUtils.errorExit("Invalid external interface type (" + externalStr + ") detected in instance " + getId());
 		//System.out.println("InstanceProperties setExternal: input=" + externalStr + ", new val=" + this.externalType + ", inst=" + getId());
 	}
 
-	/** ExternalType class carrying parameters */
-	public class ExternalType {
-		private ExtType type = ExtType.INTERNAL;
-		private HashMap<String, Integer> parms = new HashMap<String, Integer>();
-		// constructors
-		public ExternalType(ExtType type) {
-			this.type = type;
+	/** find assign of form param = value in baseStr and return value or null if search fails
+	 * 
+	 * @param baseStr - input string that will be searched for assignment
+	 * @param param - param name on lhs of assign to be found
+	 * @param intValue - if true, value must be an integer
+	 * @return
+	 */
+	private String extractParamFromString(String baseStr, String param, boolean intValue) {
+		Pattern p = intValue? Pattern.compile(".* " + param + "=(\\d+) .*") : Pattern.compile(".* " + param + "=(\\w+) .*");
+		Matcher m = p.matcher(baseStr);
+		if (m.matches()) {
+			String value = m.group(1);
+			//System.out.println("AddressableInstanceProperties extractParamFromString: " + param + ": " + value);
+			return value;
 		}
-		// type getters setters
-		public ExtType getType() {
-			return type;
-		}
-		public boolean isExternal() {
-			return (type != ExtType.INTERNAL);
-		}
-		public boolean isExternalDecode() {
-			return (type == ExtType.EXTERNAL_DECODE);
-		}
-		public void setType(ExtType type) {
-			this.type = type;
-		}
-		// parm getters/setters
-		public Integer getParm(String parm) {
-			return parms.get(parm);
-		}
-		public boolean hasParm(String parm) {
-			return parms.containsKey(parm);
-		}
-		public void addParm(String parm, Integer value) {
-			parms.put(parm,  value);
-		}
-		@Override
-		public String toString() {
-			return type.toString() + parms;
-		}
+		//System.out.println("AddressableInstanceProperties extractParamFromString: " + param + " not found in str=" + baseStr);
+		return null;
 	}
+	
+	/** return true if this instance is external and has a rep_level option */
+	public boolean hasExternalRepLevel () {
+		return isExternal() && externalType.hasParm("rep_level");
+	}
+	
+	/** return true if this instance is external and has a field_data option */
+	public boolean useExtFieldData () {
+		return isExternal() && externalType.hasParm("field_data");
+	}
+	
+	// ------
 	
 	/** get rootExternal (set by stack push into outputBuilder)
 	 *  @return the rootExternal
@@ -323,6 +384,95 @@ public abstract class AddressableInstanceProperties extends InstanceProperties {
 		this.localRootExternal = localRootExternal;
 	}
 
+	/** ExternalType class carrying parameters */
+	public class ExternalType {
+		private ExtType type = ExtType.INTERNAL;
+		private HashMap<String, Integer> parms = new HashMap<String, Integer>();
+		private String repLevelBasename;  // alternate pathname to be used if rep_level option is specified
+		private List<Integer> repLevelAddrBits;  // number of address bits in each ancestor if rep_level option is specified
+		private List<Integer> repLevelIndices;  // current instance index of each ancestor if rep_level option is specified
+		// constructors
+		public ExternalType(ExtType type) {
+			this.type = type;
+		}
+		// type getters setters
+		public ExtType getType() {
+			return type;
+		}
+		public boolean isExternal() {
+			return (type != ExtType.INTERNAL);
+		}
+		public boolean isExternalDecode() {
+			return (type == ExtType.EXTERNAL_DECODE);
+		}
+		public void setType(ExtType type) {
+			this.type = type;
+		}
+		// parm getters/setters
+		public Integer getParm(String parm) {
+			return parms.get(parm);
+		}
+		public boolean hasParm(String parm) {
+			return parms.containsKey(parm);
+		}
+		public void removeParm(String parm) {
+			if (hasParm(parm)) parms.remove(parm);
+		}
+		public void addParm(String parm, Integer value) {
+			parms.put(parm,  value);
+		}
+		@Override
+		public String toString() {
+			return type.toString() + parms;
+		}
+		// rep_level option methods  TODO
+		public String getRepLevelBasename() {
+			return repLevelBasename;
+		}
+		public void setRepLevelBasename(String repLevelBasename) {
+			this.repLevelBasename = repLevelBasename;
+		}
+		public List<Integer> getRepLevelAddrBits() {
+			return repLevelAddrBits;
+		}
+		public void setRepLevelAddrBits(List<Integer> repLevelAddrBits) {
+			this.repLevelAddrBits = repLevelAddrBits;
+		}
+		public List<Integer> getRepLevelIndices() {
+			return repLevelIndices;
+		}
+		public void setRepLevelIndices(List<Integer> repLevelIndices) {
+			this.repLevelIndices = repLevelIndices;
+		}
+		/** return true if this is first iteration of a rep_level group that will be collapsed into one external interface */
+		public boolean isFirstRepLevelIteration() {
+			for (Integer idx : repLevelIndices) if (idx != 0) return false;
+			return true;
+		}
+		/** returns address width of ancestor bits used in rep_level option */
+		public int getRepLevelAddrWidth() {
+			if (repLevelAddrBits == null) return 0;
+			int width = 0;
+			for (Integer bits : repLevelAddrBits) width += bits;
+			return width;
+		}
+		/** return the repLevel */
+		public int getRepLevel() {
+			Integer rLev = getParm("rep_level");
+			return (rLev==null)? 0 : rLev;
+		}
+		/** return verilog value of rep_level ancestor bits */
+		public String getRepLevelValueString() {
+			String outStr = "";
+			for (int idx=0; idx<getRepLevel(); idx++) {
+				String prefix = ((idx + 1) == getRepLevel())? "" : ",";
+				outStr = prefix + repLevelAddrBits.get(idx) + "'d" + repLevelIndices.get(idx) + outStr;
+			}
+			if (getRepLevel() > 1) outStr = "{" + outStr + "}";
+			return outStr;
+		}
+	}
+
 	// ------------
 
 	/** get isSwReadable (valid after fields processed)
@@ -357,7 +507,9 @@ public abstract class AddressableInstanceProperties extends InstanceProperties {
 	public abstract boolean isRegister();
 	
     /** return the max register width within this addressable instance */
-	public abstract int getMaxRegWidth();
+	public int getMaxRegWidth() {
+		return this.getExtractInstance().getRegComp().getMaxRegWidth();   // return precomputed maxregwidth from model
+	}
 
     /** return the write enable width of this addressable instance */
 	public int getWriteEnableWidth() {
@@ -404,7 +556,7 @@ public abstract class AddressableInstanceProperties extends InstanceProperties {
 	 */
 	@Override
 	public int hashCode() {
-		Ordt.errorExit("AddressableInstanceProperty hash is being called directly for id=" + getId());
+		MsgUtils.errorExit("AddressableInstanceProperty hash is being called directly for id=" + getId());
 		return hashCode(false);
 	}
 

@@ -9,10 +9,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Stack;
 
-import ordt.extract.Ordt;
+import ordt.output.common.MsgUtils;
 import ordt.extract.RegModelIntf;
 import ordt.output.FieldProperties;
 import ordt.output.OutputBuilder;
+import ordt.output.RhsReference;
 import ordt.output.drvmod.DrvModRegSetInstance.DrvModRegSetChildInfo;
 
 /** builder class for creating reg driver data structures - language independent */
@@ -37,6 +38,7 @@ public abstract class DrvModBuilder extends OutputBuilder {
 	    setVisitEachExternalRegister(false);	    // handle externals as a group
 	    setSupportsOverlays(true);	    // support overlay files
 	    DrvModBaseInstance.setBuilder(this);  // save this builder in overlay model
+		RhsReference.setInstancePropertyStack(instancePropertyStack);  // update pointer to the instance stack for rhs reference evaluation
 	    model.getRoot().generateOutput(null, this);   // generate output structures recursively starting at model root
     }
     
@@ -72,7 +74,7 @@ public abstract class DrvModBuilder extends OutputBuilder {
 		// add field info to this reg before uniqueRegs check so has is valid
 		while (fieldList.size() > 0) {
 			FieldProperties fld = fieldList.remove();  // get next field
-			newReg.addField(fld.getPrefixedId(), fld.getLowIndex(), fld.getFieldWidth(), fld.isSwReadable(), fld.isSwWriteable());
+			newReg.addField(fld.getPrefixedId(), fld.getLowIndex(), fld.getFieldWidth(), fld.isSwReadable(), fld.isSwWriteable(), fld.getReset());
 		}
         addedInstances++;
 		if (!uniqueRegs.containsValue(newReg)) {
@@ -134,7 +136,7 @@ public abstract class DrvModBuilder extends OutputBuilder {
 	    	//	System.out.println("DrvModBuilder finishRegSet: duplicate id=" + regSetProperties.getId() + ", reps=" + regSetProperties.getRepCount() + ", base=" + regSetProperties.getFullBaseAddress() + ", high=" + regSetProperties.getFullHighAddress() + ", stride=" + regSetProperties.getExtractInstance().getAddressIncrement());
 		}
 		if (regSetProperties.isRootInstance())  
-			Ordt.infoMessage("Overlay " + overlayCount + " total processed instances=" + addedInstances + ", unique instances=" + uniqueInstances + ", duplicate instances=" + (addedInstances - uniqueInstances));
+			MsgUtils.infoMessage("Overlay " + overlayCount + " total processed instances=" + addedInstances + ", unique instances=" + uniqueInstances + ", duplicate instances=" + (addedInstances - uniqueInstances));
 	}
 
 	/** process root address map */

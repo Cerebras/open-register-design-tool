@@ -9,9 +9,12 @@ import java.util.HashMap;
 import java.util.List;
 
 import ordt.annotate.AnnotateCommand;
+import ordt.extract.model.ModRegister;
 import ordt.output.OutputBuilder;
+import ordt.output.common.MsgUtils;
 import ordt.output.cppmod.CppModBuilder;
 import ordt.output.drvmod.cpp.CppDrvModBuilder;
+import ordt.output.drvmod.py.PyDrvModBuilder;
 import ordt.output.othertypes.JsonBuilder;
 import ordt.output.othertypes.JspecBuilder;
 import ordt.output.othertypes.RdlBuilder;
@@ -19,9 +22,11 @@ import ordt.output.othertypes.RegListBuilder;
 import ordt.output.othertypes.XmlBuilder;
 import ordt.output.systemverilog.SystemVerilogBuilder;
 import ordt.output.systemverilog.SystemVerilogChildInfoBuilder;
+import ordt.output.systemverilog.SystemVerilogDefinedOrdtSignals;
 import ordt.output.systemverilog.SystemVerilogTestBuilder;
 import ordt.output.uvmregs.UVMRegsBuilder;
 import ordt.output.uvmregs.UVMRegsLite1Builder;
+import ordt.output.uvmregs.UVMRegsNativeBuilder;
 import ordt.output.verilog.VerilogBuilder;
 import ordt.output.verilog.VerilogTestBuilder;
 import ordt.parameters.ExtParameters;
@@ -30,7 +35,7 @@ import ordt.parameters.ExtParameters.UVMModelModes;
 
 public class Ordt {
 
-	private static String version = "180408.01-crb";
+	private static String version = "190421.01-crb";
 	private static DebugController debug = new MyDebugController(); // override design annotations, input/output files
 
 	public enum InputType { RDL, JSPEC };
@@ -41,7 +46,7 @@ public class Ordt {
 	private static List<String> inputParmFiles = new ArrayList<String>();
 
 	public enum OutputType { VERILOG, SYSTEMVERILOG, JSPEC, RALF, RDL, REGLIST, SVBENCH, VBENCH, 
-		                     UVMREGS, UVMREGSPKG, XML, CPPMOD, CPPDRVMOD, JSON, SVCHILDINFO };
+		                     UVMREGS, UVMREGSPKG, XML, CPPMOD, CPPDRVMOD, PYDRVMOD, JSON, SVCHILDINFO };
 	private static HashMap<OutputType, String> outputNames = new HashMap<OutputType, String>();
 	private static HashMap<OutputType, String> commentChars = new HashMap<OutputType, String>();
 	private static HashMap<OutputType, String> outputFileNames = new HashMap<OutputType, String>();
@@ -49,11 +54,7 @@ public class Ordt {
 	
     private static RegModelIntf model;
     
-    private static int returnCode = 0;
-    private final static int ERROR_EXIT_RC = 8;
-    private final static int ERROR_CONTINUE_RC = 4;
-
-	/**
+    /**
 	 * @param args
 	 */
     public static void main(String[] args) throws Exception {
@@ -77,12 +78,12 @@ public class Ordt {
         			inputParmFiles.add(args[args.length - remainingArgs]);
             		remainingArgs -= 2;
         		}
-        		// overlay file / form: -overlay file tag parent
+        		// overlay file / form: -overlay tag file
         		else if (arg.equals("-overlay") && (remainingArgs>2)) {
         			String olayTag = args[args.length - remainingArgs];
         			String olayName = args[args.length - remainingArgs + 1];
         			overlayFiles.add(new OverlayFileInfo(olayName, olayTag));
-            		remainingArgs -= 4;
+            		remainingArgs -= 3;
         		}
         		else showUsage();
         	}
@@ -107,6 +108,8 @@ public class Ordt {
         	defineOutputNames();
         	defineCommentChars();
         	
+    		SystemVerilogDefinedOrdtSignals.initDefinedSignalMap();  // load the mapping of pre-defined systemverilog signals since used in multiple outputs, eg uvmregs
+        	
         	// generate output of all types specified on command line
         	for (OutputType tp : OutputType.values()) {
         		if (tp == OutputType.UVMREGS) 
@@ -116,7 +119,7 @@ public class Ordt {
         	}
 
 	    	System.out.println("Ordt complete " + new Date());
-	    	System.exit(returnCode);
+	    	System.exit(MsgUtils.getReturnCode());
 		} catch (Exception e) {
 			//errorMessage("Read of rdl file " + inputFile + " failed");
 			e.printStackTrace();
@@ -141,6 +144,7 @@ public class Ordt {
 		outputArgs.put("-xml", OutputType.XML);
 		outputArgs.put("-cppmod", OutputType.CPPMOD);
 		outputArgs.put("-cppdrvmod", OutputType.CPPDRVMOD);
+		outputArgs.put("-pydrvmod", OutputType.PYDRVMOD);
 		outputArgs.put("-json", OutputType.JSON);
 		outputArgs.put("-svchildinfo", OutputType.SVCHILDINFO);
 	}
@@ -160,6 +164,7 @@ public class Ordt {
 		outputNames.put(OutputType.XML, "xml");
 		outputNames.put(OutputType.CPPMOD, "C++ model");
 		outputNames.put(OutputType.CPPDRVMOD, "C++ driver model");
+		outputNames.put(OutputType.PYDRVMOD, "python driver model");
 		outputNames.put(OutputType.JSON, "json");
 		outputNames.put(OutputType.SVCHILDINFO, "systemverilog child map info");
 	}
@@ -179,6 +184,7 @@ public class Ordt {
 		commentChars.put(OutputType.XML, "<!--");
 		commentChars.put(OutputType.CPPMOD, "//");
 		commentChars.put(OutputType.CPPDRVMOD, "//");
+		commentChars.put(OutputType.PYDRVMOD, "#");
 		commentChars.put(OutputType.JSON, null);
 		commentChars.put(OutputType.SVCHILDINFO, (ExtParameters.getSysVerChildInfoMode() == SVChildInfoModes.MODULE)? "//" : "#");
 	}
@@ -196,7 +202,7 @@ public class Ordt {
 			   return new JspecBuilder(model); 
 		   case RALF: 
 			   //return new RalfBuilder(model);
-			   Ordt.warnMessage("Ralf output is disabled");
+			   MsgUtils.warnMessage("Ralf output is disabled");
 			   return null;
 		   case RDL: 
 			   return new RdlBuilder(model);
@@ -218,6 +224,8 @@ public class Ordt {
 			   return new CppModBuilder(model);
 		   case CPPDRVMOD: 
 			   return new CppDrvModBuilder(model);
+		   case PYDRVMOD: 
+			   return new PyDrvModBuilder(model);
 		   case JSON: 
 			   return new JsonBuilder(model);
 		   case SVCHILDINFO: 
@@ -233,7 +241,7 @@ public class Ordt {
     private static boolean verifyRootAddressMap(RegModelIntf model, OutputType type) {
 		   if (model.getRootInstancedComponent() != null) {
 			   if (!model.getRootInstancedComponent().isAddressMap()) {
-				   Ordt.errorMessage("A root addrmap is required for " + outputNames.get(type) + " generation");
+				   MsgUtils.errorMessage("A root addrmap is required for " + outputNames.get(type) + " generation");
 			       return false;
 			   }
 		   }
@@ -255,7 +263,7 @@ public class Ordt {
     	}
     	
     	// precompute min size of each register and regset
-    	newModel.getRoot().setAlignedSize(ExtParameters.getMinDataSize());
+    	newModel.getRoot().setAlignedSize(ModRegister.defaultWidth);
     	
     	// fix simple address ordering issues 
     	if (ExtParameters.allowUnorderedAddresses()) newModel.getRoot().sortRegisters();
@@ -266,7 +274,7 @@ public class Ordt {
     	// process any model annotate cmds
     	for (AnnotateCommand cmd: ExtParameters.getAnnotations()) {
     		newModel.getRoot().processAnnotation(cmd, 0);
-    		Ordt.infoMessage("Annotate command: " + cmd.getSignature() + " processed " + cmd.getChangeCount() + " elements");
+    		MsgUtils.infoMessage("Annotate command: " + cmd.getSignature() + " processed " + cmd.getChangeCount() + " elements");
     	}
     	return newModel;
 	}
@@ -309,6 +317,7 @@ public class Ordt {
 
 		System.out.println("Ordt: building " + outName + "...");
 		UVMRegsBuilder uvm = (ExtParameters.uvmregsModelMode() == UVMModelModes.LITE1)? new UVMRegsLite1Builder(model) :
+			(ExtParameters.uvmregsModelMode() == UVMModelModes.NATIVE)? new UVMRegsNativeBuilder(model) :
 			new UVMRegsBuilder(model, true);
     	if (uvm != null) {
     		uvm.write(outFileName, outName, "//");
@@ -337,6 +346,8 @@ public class Ordt {
     	System.out.println("       <filename> will be created containing jspec output");
     	System.out.println("   -overlay <tag> <input_filename>");
     	System.out.println("       <input_filename> will be processed as an overlay input with specified tag");
+    	System.out.println("   -pydrvmod <filename>");
+    	System.out.println("       <filename> will be created containing python driver model");
     	System.out.println("   -reglist <filename>");
     	System.out.println("       <filename> will be created containing a text listing of accessible registers");
     	//System.out.println("   -ralf <filename>");
@@ -368,29 +379,6 @@ public class Ordt {
     
     // ------------------------ common static methods ---------------------------
     
-	/** display error message */
-	public static void infoMessage(String msg) {
-		System.out.println("*** INFO ***: " + msg);		
-	}
-
-	/** display error message */
-	public static void warnMessage(String msg) {
-		System.err.println("*** WARNING ***: " + msg);		
-	}
-
-	/** display error message */
-	public static void errorMessage(String msg) {
-		System.err.println("*** ERROR ***: " + msg);
-		returnCode = ERROR_CONTINUE_RC;
-	}
-
-	/** display error message and exit */
-	public static void errorExit(String msg) {
-		errorMessage(msg);	
-    	System.out.println("Ordt exited due to error " + new Date());
-		System.exit(ERROR_EXIT_RC);
-	}
-
 	/** return ordt version */
 	public static String getVersion() {
 		return version;

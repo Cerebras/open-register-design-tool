@@ -8,9 +8,8 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 
-import ordt.extract.Ordt;
-import ordt.output.OutputWriterIntf;
-import ordt.parameters.ExtParameters;
+import ordt.output.common.MsgUtils;
+import ordt.output.common.OutputWriterIntf;
 
 /** class to hold/generate systemverilog info associated with a set of registers (for a module)
  *  @author snellenbach      
@@ -23,12 +22,18 @@ public class SystemVerilogRegisters {
 	private HashMap<String, Boolean> resetActiveLow = new HashMap<String, Boolean>();  // reset polarity for each reset signal defined		
 	private OutputWriterIntf writer;
 	private String clkName;  // clock for this group of registers
+	private boolean useAsyncResets = false;
 	
 	/** create VerilogRegisters 
 	 * @param clkName */
-	public SystemVerilogRegisters(OutputWriterIntf writer, String clkName) {
+	public SystemVerilogRegisters(OutputWriterIntf writer, String clkName, boolean useAsyncResets) {
 		this.writer = writer;  // save reference to calling writer
 		this.clkName = clkName;  // clock to be used for this register group
+		this.useAsyncResets = useAsyncResets;
+	}
+
+	public void setWriter(OutputWriterIntf writer) {
+		this.writer = writer;
 	}
 
 	/** retrieve a register or add if a new name **/
@@ -110,10 +115,12 @@ public class SystemVerilogRegisters {
 		public void addResetAssign(String reset, String stmt) {
 			// if reset isn't defined then issue error message
 			if (resetActiveLow.isEmpty())  {
-				Ordt.errorExit("No registers defined in addrmap " + writer.getWriterName());
+				String errmsg = "Ordt".equals(MsgUtils.getProgName())? "No registers defined in addrmap " + writer.getWriterName() :
+					"default reset signal is not defined before use";
+				MsgUtils.errorExit(errmsg);
 			}
 			else if (!resetActiveLow.containsKey(reset))  {
-				Ordt.errorExit("reset signal " + reset + " is not defined before use"); // + ", name=" + name + ", stmt=" + stmt);
+				MsgUtils.errorExit("reset signal " + reset + " is not defined before use"); // + ", name=" + name + ", stmt=" + stmt);
 			}
 			// new reset signal so add it
 			if (resetAssignList.get(reset) == null) {
@@ -205,7 +212,7 @@ public class SystemVerilogRegisters {
 			// write synchronous assignment block
 			if (!regAssignList.isEmpty()) {
 				writer.writeStmt(indentLevel, "//------- reg assigns for " + name);
-				String asyncStr = ExtParameters.sysVerUseAsyncResets()? genAsyncString() : "";
+				String asyncStr = useAsyncResets? genAsyncString() : "";
 				if (SystemVerilogModule.isLegacyVerilog()) writer.writeStmt(indentLevel++, "always @ (posedge " + clkName + asyncStr + ") begin");  
 				else writer.writeStmt(indentLevel++, "always_ff @ (posedge " + clkName + asyncStr + ") begin");  
 				boolean hasResets = writeRegResets(indentLevel, resetAssignList);

@@ -8,17 +8,16 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import ordt.extract.Ordt;
-import ordt.output.OutputWriterIntf;
-import ordt.output.SimpleOutputWriter;
-import ordt.output.systemverilog.SystemVerilogDefinedSignals;
+import ordt.output.common.MsgUtils;
+import ordt.output.common.OutputWriterIntf;
+import ordt.output.common.SimpleOutputWriter;
 import ordt.output.systemverilog.common.RemapRuleList;
 import ordt.output.systemverilog.common.SystemVerilogInstance;
+import ordt.output.systemverilog.common.SystemVerilogLocationMap;
 import ordt.output.systemverilog.common.SystemVerilogModule;
 import ordt.output.systemverilog.common.SystemVerilogSignal;
 import ordt.output.systemverilog.common.RemapRuleList.RemapRuleType;
-import ordt.output.systemverilog.io.SystemVerilogIOSignalList;
-import ordt.parameters.ExtParameters;
+import ordt.output.systemverilog.common.io.SystemVerilogIOSignalList;
 
 public class SystemVerilogWrapModule extends SystemVerilogModule {
 
@@ -32,8 +31,8 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
 	 * @param defaultClkName - default clock name used for generated registers
 	 */
 	public SystemVerilogWrapModule(OutputWriterIntf writer, int insideLocs, String defaultClkName,
-			String coverageResetName) {
-		super(writer, insideLocs, defaultClkName, coverageResetName);
+			String coverageResetName, boolean useAsyncResets) {
+		super(writer, insideLocs, defaultClkName, coverageResetName, useAsyncResets);
 	}
 
 	// ------------------- override child instance methods/classes  -----------------------
@@ -43,7 +42,7 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
 	 * check for duplicate child modules and set remap rules for child IO */
 	public SystemVerilogInstance addInstance(SystemVerilogModule mod, String name) {
 		// dup child modules not fully supported
-		if (childModuleHasMultipleInstances(mod.getName())) Ordt.warnMessage("Wrapper modules with multiple children of same type may cause generation issues.");
+		if (childModuleHasMultipleInstances(mod.getName())) MsgUtils.warnMessage("Wrapper modules with multiple children of same type may cause generation issues.");
         // add new instance w/o rules for now
 		SystemVerilogInstance newInst = super.addInstance(mod, name, null);
 		// add child using remap rule to add name prefix 
@@ -57,7 +56,7 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
 	 * note that instance remap rules are disabled in wrap, which uses a set remapping scheme */
 	@Override
 	public SystemVerilogInstance addInstance(SystemVerilogModule mod, String name, RemapRuleList rules) {
-		Ordt.warnMessage("Remap rules applied to child instance " + name + " of " + mod.getName() + " will be ignored in wrap module " + getName());
+		MsgUtils.warnMessage("Remap rules applied to child instance " + name + " of " + mod.getName() + " will be ignored in wrap module " + getName());
 		return addInstance(mod, name);
 	}
 	
@@ -155,7 +154,7 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
                 retList.add(newDest);
 			}
 			else if (indexChange < 0)
-				Ordt.errorExit("wrapper slice " + sliceInfo.getRefArray() + " is invalid for " + (isSourceSlice? "source of signal " : "signal ") + dest.getName());
+				MsgUtils.errorExit("wrapper slice " + sliceInfo.getRefArray() + " is invalid for " + (isSourceSlice? "source of signal " : "signal ") + dest.getName());
 			// create a new slice after current if needed
 			else if (indexChange + sizeChange < 0) {
 				WrapperRemapDestination newDest = new WrapperRemapDestination(this);  // start with a copy of the current
@@ -168,7 +167,7 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
                 retList.add(newDest);
 			}
 			else if (indexChange + sizeChange > 0)
-				Ordt.errorExit("wrapper slice " + sliceInfo.getRefArray() + " is invalid for " + (isSourceSlice? "source of signal " : "signal ") + dest.getName());
+				MsgUtils.errorExit("wrapper slice " + sliceInfo.getRefArray() + " is invalid for " + (isSourceSlice? "source of signal " : "signal ") + dest.getName());
             // update size and index of this object
 			int newSrcLowIndex = origSrcLowIndex + indexChange;
 			int newDstLowIndex = origDstLowIndex + indexChange;
@@ -349,7 +348,7 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
 		 * @param isInput - if true, source signal will be tagged as an external input
 		 */
 		public void addSource(String rootName, String signalName, Integer lowIndex, Integer size, boolean isInput) {
-			if (mappings.containsKey(rootName)) Ordt.errorExit("Wrapper module found multiple source signals named " + rootName);
+			if (mappings.containsKey(rootName)) MsgUtils.errorExit("Wrapper module found multiple source signals named " + rootName);
 			mappings.put(rootName, new WrapperRemapInstance(signalName, lowIndex, size, true, isInput));	// add a valid source
 			definedSignals.add(signalName);  // save all sources as defined signals
 			//if (signalName.contains("cl")) System.out.println("SystemVerilogWrapModule WrapperSignalMap: found " + signalName);
@@ -365,7 +364,7 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
 		public void addDestination(String rootName, String signalName, Integer lowIndex, Integer size, boolean isOutput) {
 			// if this destination has no source, add it and tag as invalid
 			if (!mappings.containsKey(rootName)) {
-				Ordt.errorMessage("Wrapper module did not find a source for destination signal " + rootName);
+				MsgUtils.errorMessage("Wrapper module did not find a source for destination signal " + rootName);
 				mappings.put(rootName, new WrapperRemapInstance(rootName, lowIndex, size, false, false));	// add an invalid source		
 			}
 			// now add a destination
@@ -394,7 +393,7 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
         		// check for source with no destinations
         		List<WrapperRemapDestination> remapDestList = wrapInst.getDests();
         		if (remapDestList.isEmpty())
-        			Ordt.warnMessage("no destinations found for wrapper source signal " + src.getName());
+        			MsgUtils.warnMessage("no destinations found for wrapper source signal " + src.getName());
         		// add all destinations to wire list and use specified xform
     			for (WrapperRemapDestination remapDest: wrapInst.getDests()) {
     				SystemVerilogSignal dst = remapDest.getDest();   // get destination signal info 
@@ -417,19 +416,19 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
     		            	// if an override clock specified and it doesnt exist, add to IO and definedSignals
     		            	String overrideClkName = ((WrapperRemapSyncStagesXform) xform).getClkName();
     		            	if ((overrideClkName!=null) && !overrideClkName.isEmpty() && !definedSignals.contains(overrideClkName)) {
-    		            		Ordt.infoMessage("New clock specified in wrapper (" + overrideClkName + ") will be added to IO.");
-    		            		addSimpleScalarFrom(SystemVerilogDefinedSignals.HW, overrideClkName);
+    		            		MsgUtils.infoMessage("New clock specified in wrapper (" + overrideClkName + ") will be added to IO.");
+    		            		addSimpleScalarFrom(SystemVerilogLocationMap.getExternalId(), overrideClkName);
     		            		//System.out.println("SystemVerilogWrapModule generateMapOutput: ioHash size=" + ioHash.size());
     		            	}
             				statements.add(xform.getXformString(srcName, dstName, dst.getSize(), optionalParms));  // add the sync stages instance
             				xformsDefined.put(xform.getType(), xform);  // save in defined xforms list  // TODO - no need to create define if an override
             				break;
    		                default: 
-   		                	Ordt.errorMessage("invalid wrapper transform (" + xform.getType() + ") specified from source " + src.getName() + " to destination " + dst.getName());
+   		                	MsgUtils.errorMessage("invalid wrapper transform (" + xform.getType() + ") specified from source " + src.getName() + " to destination " + dst.getName());
    		                	break;
     		            }		
     				}
-    				else Ordt.errorMessage("no valid source found for wrapper destination signal " + dst.getName());  // TODO add internal tieoff option
+    				else MsgUtils.errorMessage("no valid source found for wrapper destination signal " + dst.getName());  // TODO add internal tieoff option
 
     			}
 		    }
@@ -471,8 +470,8 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
 	
 	// ------------------- wrapper IO/signal generation  -----------------------
 	
-    /** generate IOs, signals, and assignments for this wrap module.  Must be called after child instances are added */
-	public void generateWrapperInfo() {  
+    /** generate IOs, signals, and assignments for this wrap module using specidied xform map.  Must be called after child instances are added */
+	public void generateWrapperInfo(LinkedHashMap<String, WrapperRemapXform> xformMap) {  
 		generateIOListFromChildren();  // gen wrapper IO list
 		inheritChildParameters();  // use child parameters
 		// create signal mappings
@@ -481,7 +480,7 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
 		setIODestinationSignals(useInterfaces);
 		setChildDestinationSignals();
 		// get xform overrides from parameters
-		wrapMappings.setRemapTransforms(ExtParameters.sysVerWrapperXformMap());
+		wrapMappings.setRemapTransforms(xformMap);
 		// create wire/reg defs and assigns for mapping
 		wrapMappings.generateMapOutput();	
 		//wrapMappings.display(); 
@@ -507,11 +506,14 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
 				Integer insideLocs = inst.getMod().getInsideLocs();  // get this child's internal locations
 				rules.addRule(outsideLocs, insideLocs, RemapRuleType.SAME, ""); // input rule
 				rules.addRule(insideLocs, outsideLocs, RemapRuleType.SAME, ""); // output rule
+				//System.out.println("SystemVerilogWrapModule generateIOListFromChildren: insideLocs=" + insideLocs + ", outsideLocs=" + outsideLocs);
 				newList.addList(new SystemVerilogIOSignalList(fullList, rules, uniqueIONames));  // get unique child IOs
+				//newList.display();
+				//System.out.println(uniqueIONames);
 			}
 		}
         // add these child IOs to this modules IO list
-		useIOList(newList, SystemVerilogDefinedSignals.HW);
+		useIOList(newList, SystemVerilogLocationMap.getExternalId());
 	}
 	
 	/** load wrapMappings w/ source signals from external inputs */
@@ -580,19 +582,20 @@ public class SystemVerilogWrapModule extends SystemVerilogModule {
 	 */
 	public void writeXformModules(boolean separateXformFiles, String outPrefix, String outSuffix, String commentPrefix) { 
 		// write define for each xform used in this wrapper
-		for (WrapperRemapXform xform: xformsDefined.values()) {
-			OutputWriterIntf xformWriter = writer;  // use the builder/writer by default
-			if (separateXformFiles) {
-				String outFile = outPrefix + xform.getModuleName() + outSuffix;
-				xformWriter = new SimpleOutputWriter(outFile, "wrapper xform");  // override writers
-		    	//writer.writeHeader(commentPrefix); // write the file header  TODO - move all these write methods to static?
+		for (WrapperRemapXform xform: xformsDefined.values()) { 
+			if (!xform.hasBeenWritten()) {  // only allow each module to be written once
+				OutputWriterIntf xformWriter = writer;  // use the builder/writer by default
+				if (separateXformFiles) {
+					String outFile = outPrefix + xform.getModuleName() + outSuffix;
+					xformWriter = new SimpleOutputWriter(outFile, "wrapper xform");  // override writers
+			    	//writer.writeHeader(commentPrefix); // write the file header  TODO - move all these write methods to static?
+				}
+				xformWriter.writeStmt(0, "");
+				//xformWriter.writeStmt(0, "// this is module " + xform.getModuleName());
+				xformWriter.writeStmts(0, xform.getXformModuleDef());
+				if (separateXformFiles) xformWriter.close();
 			}
-			xformWriter.writeStmt(0, "");
-			//xformWriter.writeStmt(0, "// this is module " + xform.getModuleName());
-			xformWriter.writeStmts(0, xform.getXformModuleDef());
-			if (separateXformFiles) xformWriter.close();
-		}
-		
+		}	
 	}
 
 	public static void main(String[] args) {

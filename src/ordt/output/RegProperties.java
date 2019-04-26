@@ -3,7 +3,7 @@
  */
 package ordt.output;
 
-import ordt.extract.Ordt;
+import ordt.output.common.MsgUtils;
 
 import ordt.extract.DefinedProperties;
 import ordt.extract.PropertyList;
@@ -55,7 +55,9 @@ public class RegProperties extends AddressableInstanceProperties {
 
 	@Override
 	public boolean isRegister() {
-		return true;
+		ModComponent comp = getExtractInstance().getRegComp();
+		return (comp != null) && (comp.isReg());  // can have regset model elements mapped onto RegProperties for external region processing
+		//return true;
 	}
 	
 	// TODO - add clone constructor and display for regprops
@@ -63,23 +65,19 @@ public class RegProperties extends AddressableInstanceProperties {
     @Override
 	public void extractProperties(PropertyList pList) {
 		super.extractProperties(pList);  // extract common parameters
-		//Ordt.infoMessage("RegProperties: id=" + getId() + ", pList=" + pList);
+		//MsgUtils.infoMessage("RegProperties: id=" + getId() + ", pList=" + pList);
 
 	    // go directly to extractInstance to get reg width, external, and alias parms
 		
 		// set reg width and initialize fields for field addition
-		setRegWidth();      // set the width of this reg based on properties
+		setRegWidth();      // set the width of this reg based on properties (dynamic assigns are ignored)
+		
 		// initially all bits available for field assignment
 		//System.out.println("RegProperties extractProperties: regwidth=" + getRegWidth());
 		availableBits = new int [getRegWidth() + 1];   // initializes all to 0
 		availableBits[0] = getRegWidth();
 		highAvailableIdx = 0;  // init bit 0 as high available index
-		
-		/*if (getInstancePath().contains("stats.spin")) { 
-		    //display();
-	        System.out.println("RegProperties extractInstance: inst=" + getInstancePath() + ", parmlist=" + pList);
-   	    }*/
-									
+											
 		if (extractInstance.hasProperty("aliasedId")) {
 			//System.out.println("RegProperties: creating properties for aliased register, id=" + regInst.getId() + ", aliasedId=" + regInst.getProperty("aliasedId") );
 			setAliasedId(extractInstance.getProperty("aliasedId"));
@@ -131,8 +129,8 @@ public class RegProperties extends AddressableInstanceProperties {
 		if (extractInstance.hasProperty("regwidth")) 
 			regWidth = extractInstance.getIntegerProperty("regwidth"); 
 		// otherwise look for a regwidth set in component  // TODO - is this needed or will always be picked up in instance props?
-		else if ((regComp != null) && (regComp.hasProperty("regwidth"))) {
-			regWidth = regComp.getIntegerProperty("regwidth");
+		else if ((regComp != null) && (regComp.isReg())) {
+			regWidth = ((ModRegister) regComp).getWidth();
 		}
 		// else use default reg size
 		if (regWidth==null) regWidth = ModRegister.defaultWidth; 
@@ -146,7 +144,7 @@ public class RegProperties extends AddressableInstanceProperties {
         int minRegWidth = ExtParameters.getMinDataSize();
         int maxRegWidth = minRegWidth * 16;
 		if (!Utils.isInRange(regWidth, minRegWidth, maxRegWidth))   
-			Ordt.errorMessage("Invalid register width (" + regWidth + ") specified in " + extractInstance.getFullId() + ".  Size should be between " + minRegWidth + " and " + maxRegWidth + ".");	
+			MsgUtils.errorMessage("Invalid register width (" + regWidth + ") specified in " + extractInstance.getFullId() + ".  Size should be between " + minRegWidth + " and " + maxRegWidth + ".");	
 	}
 	
 	/** set the width of register directly
@@ -156,7 +154,7 @@ public class RegProperties extends AddressableInstanceProperties {
 		// check for valid regwidth
         int minRegWidth = ExtParameters.getMinDataSize();
 		if ((regWidth % minRegWidth) != 0) {
-			Ordt.errorMessage("Invalid register width (" + regWidth + ") specified in " + extractInstance.getFullId() + ".  Size must be a multiple of min_data_size (" + minRegWidth + ").");
+			MsgUtils.errorMessage("Invalid register width (" + regWidth + ") specified in " + extractInstance.getFullId() + ".  Size must be a multiple of min_data_size (" + minRegWidth + ").");
 		}
 	}
 
@@ -366,11 +364,14 @@ public class RegProperties extends AddressableInstanceProperties {
 		return filledBits;
 	}
 
-	/** get fieldCount
-	 *  @return the fieldCount
-	 */
+	/** return the number of fields in this register - only valid after field processing */
 	public Integer getFieldCount() {
 		return fieldCount;
+	}
+
+	/** return true if register has at least one field  - only valid after field processing */
+	public boolean hasFields() {
+		return fieldCount>0;
 	}
 
 	/** set current offset info to be used for field packing within a fieldset hierarchy
@@ -384,7 +385,7 @@ public class RegProperties extends AddressableInstanceProperties {
 		//System.out.println("RegProperties addFieldSet: incoming state (highAvailableIdx=" + highAvailableIdx + ",fieldSetOffset=" + fieldSetOffset + ", minValidOffset=" + minValidOffset + ")");
 		// adjust current fieldset offset
 		fieldSetOffset = (fsOffset==null)? highAvailableIdx : parentFsOffset + fsOffset;  // TODO null offset is correct only if packing from low to high since highAvailableIdx is absolute
-		if (fieldSetOffset<parentFsOffset) Ordt.errorExit("Unable to fit fieldset " + fieldSetProperties.getId() + " in register " + getInstancePath());
+		if (fieldSetOffset<parentFsOffset) MsgUtils.errorExit("Unable to fit fieldset " + fieldSetProperties.getId() + " in register " + getInstancePath());
         // set the min allowed register offset including any padding
 		Integer bitPaddingOffset = ((ModRegister) getExtractInstance().getRegComp()).getPadBits();
 		int newMinValidOffset = bitPaddingOffset + fieldSetOffset;
@@ -434,7 +435,7 @@ public class RegProperties extends AddressableInstanceProperties {
 		else lowFieldIndex = addFloatingField(width);  // FIXME - fieldsetoffset and padding should constrain valid ranges (min valid has these)
 		// now create the output array index string
 		if (lowFieldIndex == null) {
-			Ordt.errorExit("Unable to fit all fields in " + getRegWidth() + "b register instance " + getInstancePath());
+			MsgUtils.errorExit("Unable to fit all fields in " + getRegWidth() + "b register instance " + getInstancePath());
 		}
 		//if (getId().equals("scfg_data")) System.out.println("RegProperties addField: id=" + fieldProperties.getInstancePath() + ", adding at reg lowFieldIndex=" + lowFieldIndex);
 		fieldCount++;  // bump the field count

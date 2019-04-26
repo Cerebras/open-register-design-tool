@@ -111,6 +111,19 @@ public class ModAddressableInstance extends ModInstance {
 		if (numStr != null) setAddressShift(new RegNumber(numStr));					
 	}
 	
+	/** return the aligned size of this instance by multiplying component aligned size or increment by reps */
+	public RegNumber getAlignedSize() {
+		if (this.getRepCount()<2) {
+			//if (regComp.getId().equals("yt_fabio_switch_sopcasc1")) System.out.println("ModAddressableInstance setAlignedSize: repCount=" + this.getRepCount() + ", return=" + this.regComp.getAlignedSize());
+			return new RegNumber(this.regComp.getAlignedSize()); // if no reps, use comp size
+		}
+		RegNumber size = (this.getAddressIncrement() != null) ? new RegNumber(this.getAddressIncrement()) : 
+            new RegNumber(this.regComp.getAlignedSize());  // compute size of this instance or use increment if specified
+        size.multiply(this.getRepCount()); 
+		//if (regComp.getId().equals("yt_fabio_switch_sopcasc1")) System.out.println("ModAddressableInstance setAlignedSize: repCount[N]=" + this.getRepCount() + ", return=" + size);
+        return size;
+	}
+	
 	/** set a numeric instance variable - overridden in ModInstance child classes
 	 * 
 	 * @param key - if this key is found, instance value will be updated to val

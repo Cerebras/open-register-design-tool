@@ -21,7 +21,7 @@ import org.antlr.v4.runtime.tree.ParseTreeWalker;
 
 import ordt.annotate.AnnotateCommand;
 import ordt.annotate.AnnotateSetCommand;
-import ordt.extract.Ordt;
+import ordt.output.common.MsgUtils;
 import ordt.extract.RegNumber;
 import ordt.extract.model.ModComponent.CompType;
 import ordt.output.systemverilog.common.wrap.WrapperRemapInvertXform;
@@ -48,7 +48,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 	public enum SVBlockSelectModes { INTERNAL, EXTERNAL, ALWAYS } 
 	public enum SVDecodeInterfaceTypes { NONE, LEAF, SERIAL8, RING8, RING16, RING32, PARALLEL, PARALLEL_PULSED, ENGINE1} 
 	public enum SVChildInfoModes { PERL, MODULE } 
-	public enum UVMModelModes { HEAVY, LITE1 } 
+	public enum UVMModelModes { HEAVY, LITE1, NATIVE } 
 	
 	// non-standard typed parameters
 	private static SVDecodeInterfaceTypes sysVerRootDecoderInterface;
@@ -64,7 +64,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 	
 	// set of systemverilog wrapper signal mapping rules
 	private static LinkedHashMap<String, WrapperRemapXform> xformMap = new LinkedHashMap<String, WrapperRemapXform>();
-			
+	
 	public ExtParameters() {
 	}
 	
@@ -78,13 +78,13 @@ public class ExtParameters extends ExtParmsBaseListener  {
 				Integer intval = Utils.strToInteger(valStr);
 				if (intval != null) {
 					if (!Utils.isPowerOf2(intval) || !Utils.isInRange(intval, 8, 128))  
-						Ordt.errorMessage("Invalid minimum data size (" + intval + ").  Must be power of 2 between 8 and 128.");
+						MsgUtils.errorMessage("Invalid minimum data size (" + intval + ").  Must be power of 2 between 8 and 128.");
 					else {
 						value = intval;
 						if (value > 32) ModRegister.setDefaultWidth(value);  // if min size exceeds 32, change default
 					}
 				} 
-				else Ordt.errorMessage("Invalid minimum data size specified (" + value + ").");
+				else MsgUtils.errorMessage("Invalid minimum data size specified (" + value + ").");
 			}
 		});
 		initRegNumberParameter("base_address", new RegNumber(0)); 
@@ -104,7 +104,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 			public void set(String valStr) {
 				if ((valStr != null) && !valStr.isEmpty()) {
 					value = valStr;
-					Ordt.warnMessage("debug_mode parameter is set (value = " + value + ").  Non-standard ordt behavior can occur.");
+					MsgUtils.warnMessage("debug_mode parameter is set (value = " + value + ").  Non-standard ordt behavior can occur.");
 				} 
 			}
 		});
@@ -149,6 +149,8 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		initBooleanParameter("generate_dv_bind_modules", false); 
 		initBooleanParameter("use_global_dv_bind_controls", false); 
 		initBooleanParameter("include_addr_monitor", false); 
+		initBooleanParameter("generate_iwrap_xform_modules", true); 
+		initBooleanParameter("include_sequential_assign_delays", true); 
 		
 		// ---- rdl output defaults
 		initBooleanParameter("root_component_is_instanced", true); 
@@ -180,7 +182,10 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		uvmModelMode = UVMModelModes.HEAVY; 
 		initBooleanParameter("regs_use_factory", false); 
 		initBooleanParameter("use_numeric_uvm_class_names", false); 
-		uvmMemStrategy = UvmMemStrategy.BLOCK_WRAPPED; 		
+		uvmMemStrategy = UvmMemStrategy.BLOCK_WRAPPED;
+		initRegNumberParameter("base_address_override", null); 
+		initBooleanParameter("use_module_path_defines", true); 
+
 		// ---- bench output defaults
 		initStringListParameter("add_test_command", new ArrayList<String>());
 		initBooleanParameter("generate_external_regs", false); 
@@ -189,11 +194,15 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		
 		// ---- xml output defaults
 		initBooleanParameter("include_field_hw_info", true);
-
+		initBooleanParameter("include_component_info", false);
+		
+		// ---- pydrvmod output defaults
+		initStringParameter("default_tag_name", null);
+                
 		// ---- cppmod output defaults
 		initBooleanParameter("reuse_cpp_classes", false);
 		initStringParameter("cpp_class_name", "instance");
-	}
+        }
 	
 	static void initBooleanParameter(String name, Boolean value) {
 		params.put(name, new ExtBooleanParameter(name, value));
@@ -264,7 +273,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		// save the parameter input file names
 		parmFiles = inputParmFiles;
 		
-    	if (parmFiles.isEmpty()) Ordt.warnMessage("No parameters file specified.  Default or inline defined parameters will be used.");
+    	if (parmFiles.isEmpty()) MsgUtils.warnMessage("No parameters file specified.  Default or inline defined parameters will be used.");
 
 		// read parameters from each file in list
 		for (String inputFile: parmFiles) {
@@ -297,13 +306,13 @@ public class ExtParameters extends ExtParmsBaseListener  {
         	ParseTreeWalker walker = new ParseTreeWalker(); // create standard
         	walker.walk(inParms, tree); // initiate walk of tree with listener
         	if (parser.getNumberOfSyntaxErrors() > 0) {
-        		Ordt.errorExit("Parameter file parser errors detected.");  
+        		MsgUtils.errorExit("Parameter file parser errors detected.");  
         	}
         	
         	//root.display(true);
 
         } catch (FileNotFoundException e) {
-        	Ordt.errorExit("parameter file not found. "  + e.getMessage());
+        	MsgUtils.errorExit("parameter file not found. "  + e.getMessage());
         } catch (IOException e) {
             e.printStackTrace();
         }		
@@ -388,7 +397,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 			//System.out.println("ExtParameters enterSystemverilog_wrapper_remap_command: adding pattern=" + signalPattern + ", " + xf.getType());
 		    break;
 		default:
-			Ordt.errorExit("Unsupported RTL wrapper remap command (" + ctx.getText() + ") specified in parameters.");
+			MsgUtils.errorExit("Unsupported RTL wrapper remap command (" + ctx.getText() + ") specified in parameters.");
 			break;
 		}
 	}
@@ -411,6 +420,13 @@ public class ExtParameters extends ExtParmsBaseListener  {
 	 * Assign xml output parameters
 	 */
 	@Override public void enterXml_out_parm_assign(ExtParmsParser.Xml_out_parm_assignContext ctx) {
+		assignParameter(ctx.getChild(0).getText(), ctx.getChild(2).getText());		
+	}
+	
+	/**
+	 * Assign pydrvmod output parameters
+	 */
+	@Override public void enterPydrvmod_out_parm_assign(ExtParmsParser.Pydrvmod_out_parm_assignContext ctx) {
 		assignParameter(ctx.getChild(0).getText(), ctx.getChild(2).getText());		
 	}
 
@@ -471,7 +487,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		// ---- not a match for std types, so check others		
 		else if (name.equals("root_has_leaf_interface")) {  // DEPRECATED 
 			sysVerRootDecoderInterface = value.equals("true") ? SVDecodeInterfaceTypes.LEAF : SVDecodeInterfaceTypes.PARALLEL;
-			Ordt.warnMessage("Use of control parameter 'root_has_leaf_interface' is deprecated. Use 'root_decoder_interface = leaf' instead.");
+			MsgUtils.warnMessage("Use of control parameter 'root_has_leaf_interface' is deprecated. Use 'root_decoder_interface = leaf' instead.");
 		}
 		else if (name.equals("root_decoder_interface")) {  
 			if (value.equals("leaf")) sysVerRootDecoderInterface = SVDecodeInterfaceTypes.LEAF;
@@ -495,7 +511,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		}
 		else if (name.equals("use_external_select")) {  // DEPRECATED 
 			systemverilogBlockSelectMode = value.equals("true") ? SVBlockSelectModes.EXTERNAL : SVBlockSelectModes.INTERNAL;
-			Ordt.warnMessage("Use of control parameter 'use_external_select' is deprecated. Use 'block_select_mode' instead.");
+			MsgUtils.warnMessage("Use of control parameter 'use_external_select' is deprecated. Use 'block_select_mode' instead.");
 		}
 		else if (name.equals("block_select_mode")) {  
 			if (value.equals("internal")) systemverilogBlockSelectMode = SVBlockSelectModes.INTERNAL;
@@ -509,11 +525,12 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		}
 
 		else if (name.equals("external_decode_is_root")) {   // DEPRECATED 
-			Ordt.warnMessage("Use of control parameter 'external_decode_is_root' is deprecated.");
+			MsgUtils.warnMessage("Use of control parameter 'external_decode_is_root' is deprecated.");
 		}
 
 		else if (name.equals("uvm_model_mode")) {  
 			if (value.equals("lite1")) uvmModelMode = UVMModelModes.LITE1;
+			else if (value.equals("native")) uvmModelMode = UVMModelModes.NATIVE;
 			else uvmModelMode = UVMModelModes.HEAVY;
 		}
 
@@ -524,7 +541,7 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		}
 		
 		//else
-		//	Ordt.errorMessage("invalid parameter detected (" + name + ").");
+		//	MsgUtils.errorMessage("invalid parameter detected (" + name + ").");
 	}
 
 	/** get parmFile
@@ -794,6 +811,11 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		return xformMap;
 	}
 
+	/** add a signal pattern/xform pair to the xformMap */
+	public static void addWrapperXform(String signalPattern, WrapperRemapXform xf) {
+		xformMap.put(signalPattern, xf);
+	}
+
 	public static boolean sysVerSeparateIwrapEncapFiles() {
 		return getBooleanParameter("separate_iwrap_encap_files");
 	}
@@ -809,7 +831,15 @@ public class ExtParameters extends ExtParmsBaseListener  {
 	public static boolean sysVerIncludeAddrMonitor() {
 		return getBooleanParameter("include_addr_monitor");
 	}
+
+	public static boolean sysVerGenerateIwrapXformModules() {
+		return getBooleanParameter("generate_iwrap_xform_modules");
+	}
 	
+	public static String sysVerSequentialAssignDelayString() {
+		return getBooleanParameter("include_sequential_assign_delays")? "#1 " : "";
+	}
+			
 	// bench parameter getters
 
 	public static Boolean sysVerGenerateExternalRegs() {
@@ -925,7 +955,11 @@ public class ExtParameters extends ExtParmsBaseListener  {
 	public static Boolean uvmregsUseNumericUvmClassNames() {
 		return getBooleanParameter("use_numeric_uvm_class_names");
 	}
-		
+	
+	public static Boolean uvmregsUseModulePathDefines() {
+		return getBooleanParameter("use_module_path_defines");
+	}
+			
 	public static int uvmregsMaxRegCoverageBins() {
 		return getIntegerParameter("max_reg_coverage_bins");
 	}
@@ -938,6 +972,24 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		return uvmMemStrategy;
 	}
 	
+	public static RegNumber uvmregsBaseAddressOverride() {
+		return getRegNumberParameter("base_address_override");
+	}
+	
+	public static boolean hasUvmregsBaseAddressOverride() {
+		return uvmregsBaseAddressOverride() != null;
+	}
+	
+	// pydrvmod getters/setters
+	
+	public static String pyDrvDefaultTagName() {
+		return getStringParameter("default_tag_name");
+	}
+	
+	public static boolean hasPyDrvDefaultTagName() {
+		return getStringParameter("default_tag_name") != null;
+	}
+		
 	// --------
 	
 	/** returns true if test commands have been specified  */
@@ -963,6 +1015,10 @@ public class ExtParameters extends ExtParmsBaseListener  {
 		return getBooleanParameter("include_field_hw_info");
 	}
 	
+	public static Boolean xmlIncludeComponentInfo() {
+		return getBooleanParameter("include_component_info");
+	}
+		
 	// cppmod getters/setters
 
 	public static Boolean cppmodReuseCppClasses() {

@@ -14,6 +14,7 @@ import java.util.Stack;
 import ordt.extract.RegModelIntf;
 import ordt.output.FieldProperties;
 import ordt.output.OutputBuilder;
+import ordt.output.RhsReference;
 import ordt.output.RegProperties;
 import ordt.output.RegSetProperties;
 import ordt.output.drvmod.cpp.CppBaseModClass;
@@ -44,6 +45,7 @@ public class CppModBuilder extends OutputBuilder {
 	    setVisitEachRegSet(false);   // only need to call once for replicated reg set groups
 	    setVisitExternalRegisters(true);  // we will visit externals 
 	    setVisitEachExternalRegister(false);	    // handle externals as a group
+            RhsReference.setInstancePropertyStack(instancePropertyStack);  // update pointer to the instance stack for rhs reference evaluation
 	    model.getRoot().generateOutput(null, this);   // generate output structures recursively starting at model root
     }
 

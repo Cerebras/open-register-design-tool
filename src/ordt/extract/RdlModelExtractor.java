@@ -20,7 +20,10 @@ import ordt.extract.model.ModEnumElement;
 import ordt.extract.model.ModIndexedInstance;
 import ordt.extract.model.ModInstance;
 import ordt.extract.model.ModRootComponent;
-import ordt.extract.model.ModSignal;
+import ordt.output.common.MsgUtils;
+import ordt.output.systemverilog.common.wrap.WrapperRemapInvertXform;
+import ordt.output.systemverilog.common.wrap.WrapperRemapSyncStagesXform;
+import ordt.output.systemverilog.common.wrap.WrapperRemapXform;
 import ordt.parameters.ExtParameters;
 import ordt.parameters.Utils;
 import ordt.parse.systemrdl.SystemRDLBaseListener;
@@ -52,14 +55,10 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 	
 	private static int anonCompId = 0;   // id for anonymous components
 	
-	private InstanceRef rhsInstanceRef = null;  // rhs ref info for assignment checking
+	private List<InstanceRef> rhsInstanceRef = new ArrayList<InstanceRef>();  // list of rhs refs in an assign for validity checking
 	
 	private String usrPropertyName, usrPropertyType, usrPropertyDefault;  // temp vars for capturing user defined properties
 	private List<String> usrPropertyComponents;
-
-	// structures to pre-build a list of user-defined signals
-	private List<ModSignal> usrSignals = new ArrayList<ModSignal>();  // list of all signals in the model
-	private HashSet<String> usrSignalNames = new HashSet<String>();  // full list of extracted signal names
 
 	private Stack<Integer> fieldOffsets = new Stack<Integer>(); // stack of offsets used to calculate fieldset widths
 
@@ -97,18 +96,18 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
         	ParseTreeWalker walker = new ParseTreeWalker(); // create standard
         	walker.walk(this, tree); // initiate walk of tree with listener
         	if (parser.getNumberOfSyntaxErrors() > 0) {
-        		Ordt.errorExit("RDL parser errors detected.");  
+        		MsgUtils.errorExit("RDL parser errors detected.");  
         	}
         	
         	// if components are specified for processing, find each and create an instance  
         	if (ExtParameters.hasRdlProcessComponents()) processComponents();
         	else if (root.getFirstChildInstance() == null)
-        		Ordt.errorExit("No rdl structures instanced or typedefs specified for processing.");
+        		MsgUtils.errorExit("No rdl structures instanced or typedefs specified for processing.");
 
         	//root.display(true);
 
         } catch (FileNotFoundException e) {
-        	Ordt.errorExit("rdl file not found. "  + e.getMessage());
+        	MsgUtils.errorExit("rdl file not found. "  + e.getMessage());
         } catch (IOException e) {
             e.printStackTrace();
         }		
@@ -137,7 +136,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
     			//processComp.addInstanceOf(newInstance);
     			//System.out.println("RdlModelExtract processComponents: id=" + typedefName + ", isRootInstance=" + newInstance.isRootInstance());
     		}
-    		else Ordt.errorExit("Unable to find specified component (" + typedefName + ") for processing.");        			
+    		else MsgUtils.errorExit("Unable to find specified component (" + typedefName + ") for processing.");        			
 			
 		}
 		// otherwise more than one typedef so create a container component
@@ -167,7 +166,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
         			tdefContainer.addCompInstance(newInstance);   // add this instance to root or container
         			newInstance.setParent(tdefContainer);
         		}
-        		else Ordt.errorExit("Unable to find specified component (" + typedefName + ") for processing.");        			
+        		else MsgUtils.errorExit("Unable to find specified component (" + typedefName + ") for processing.");        			
     		}
     	}
 	}
@@ -258,16 +257,11 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 				rElem.updateDefaultProperties(activeParent.getDefaultProperties());  // pick up defaults from parent
 			}
 						
-			// save list of defined signals - will need this to resolve rdl signals vs fields in assignments
-			if ("signal".equals(cd_type)) {
-				usrSignals.add((ModSignal) rElem);
-				//System.out.println("RdlModelExtract enterComponent_def: added signal comp id=" + rElem.getId());
-			}
 			//System.out.println(repeat(' ',ctx.depth()) + "  added new " + cd_type);
 			//System.out.println("RdlModelExtractor enterComponent_def: new comp id=" + rElem.getId() + ", type=" + rElem.getBaseComponentTypeName());
 		}
 		else {
-			Ordt.errorExit("component_def type=" + cd_type + " not implemented");
+			MsgUtils.errorExit("component_def type=" + cd_type + " not implemented");
 		}
 
 	}
@@ -289,7 +283,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 			if (currentWidth == null)
 			    pe.setProperty("fieldstructwidth", childOffset.toString(), 0);  // save the fieldset width as a property in the component
 			else if (childOffset>currentWidth)
-				Ordt.errorExit("Specified fieldstructwidth (" + currentWidth + ") in fieldstruct " + pe.getId() + " is smaller than total of child widths (" + childOffset + ")");
+				MsgUtils.errorExit("Specified fieldstructwidth (" + currentWidth + ") in fieldstruct " + pe.getId() + " is smaller than total of child widths (" + childOffset + ")");
 			else
 				pe.setProperty("fieldstructwidth", currentWidth.toString(), 0);  // save the fieldset width as a property in the component
 			//System.out.println("RdlModelExtractor exitComponent_def: Fieldstruct " + pe.getId() + ", width=" + pe.getIntegerProperty("fieldstructwidth")); 
@@ -351,7 +345,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 				activeInstance.updateProperties(parentDef.getDefaultProperties());   // default properties from ancestors 
 			}
 		}
-		else Ordt.errorMessage("unable to find component " + compId + ((parentDef != null) ? " instanced in " + parentDef.getId() : ""));
+		else MsgUtils.errorMessage("unable to find component " + compId + ((parentDef != null) ? " instanced in " + parentDef.getId() : ""));
 
 	}
 	
@@ -368,7 +362,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 	 * Concat
 	 */
 	@Override public void enterConcat(@NotNull SystemRDLParser.ConcatContext ctx) { 
-		Ordt.warnMessage("concat not implemented");
+		MsgUtils.warnMessage("concat not implemented");
 	}
 	
 	/**
@@ -439,7 +433,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 		// create a new enumElement
 		ModEnumElement newEnumElement = new ModEnumElement();
 		// extract id and value of this element
-		if (ctx.getChildCount()<3) Ordt.errorExit("Error parsing enum near line " + ctx.getStart().getLine());
+		if (ctx.getChildCount()<3) MsgUtils.errorExit("Error parsing enum near line " + ctx.getStart().getLine());
 		newEnumElement.setId(ctx.getChild(0).getText());
 		newEnumElement.setValue(ctx.getChild(2).getText()); 
 		// extract name and description
@@ -513,7 +507,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 			}
 			
 		}
-		else Ordt.warnMessage("explicit property assignment form not supported: " + ctx.getText());   
+		else MsgUtils.warnMessage("explicit property assignment form not supported: " + ctx.getText());   
 	}
 	
 	/**
@@ -565,7 +559,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
     			//Jrdl.infoMessage("found alias target instance " + aliasId + " in local context");   
         	}
         	else {
-    			Ordt.errorMessage("unable to find alias target instance " + aliasId + " in local context");
+    			MsgUtils.errorMessage("unable to find alias target instance " + aliasId + " in local context");
         	}
         }
         // otherwise save the component Id
@@ -588,7 +582,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 		// if this reg is on rhs of an assign, save it
 		if (activeRules.contains(SystemRDLParser.RULE_post_property_assign) &&
 			activeRules.contains(SystemRDLParser.RULE_property_assign_rhs)) {
-		   rhsInstanceRef = new InstanceRef(ctx, false);
+		   rhsInstanceRef.add(new InstanceRef(ctx, false));
 		}
 	}
 
@@ -613,23 +607,24 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 		InstanceRef lhsInstanceRef = new InstanceRef(ctx.getChild(0), true);
 		String property = lhsInstanceRef.getProperty();
 		String instPathStr = lhsInstanceRef.getInstPathStr();
-		rhsInstanceRef = null;  // clear out the rhsRef
+		rhsInstanceRef.clear();  // new assign, so clear out the rhsRef list
 		
 		//System.out.println("RdlModelExtractor enterPost_property_assign: dref instance " + instPathStr + ", property=" + property + ", wildcards=" + lhsInstanceRef.hasWildcard()); 
 		// exit with error if an array indexed value is used on lhs	
 		if ((instPathStr!=null) && instPathStr.contains("[")) {
-			Ordt.errorMessage("property assignment using indexed values in lhs not supported: " + ctx.getText());
+			MsgUtils.errorMessage("property assignment using indexed values in lhs not supported: " + ctx.getText());
 			return;
 		}
 		
-		// if an instance ref of form: path -> property
+		// search for instance having this path in the current component definition
+		ModComponent comp = activeCompDefs.peek();
+		//System.out.println("RdlModelExtractor: post prop assign active component=" + comp.getId()); 
+		ModInstance regInst = comp.findInstance(lhsInstanceRef.getInstPath());   // search for specified instance recursively  
+		
+		// if assigning an instance ref of form: path -> property
 		if (lhsInstanceRef.hasDeRef()) { 
-			// search for instance having this path in the current component definition
-			ModComponent comp = activeCompDefs.peek();
-			//System.out.println("RegExtractor: post prop assign active component =" + comp.getId()); 
-			ModInstance regInst = comp.findInstance(lhsInstanceRef.getInstPath());   // search for specified instance recursively  
 			if (regInst == null)
-				Ordt.errorMessage("unable to find lhs instance in property assignment: " + ctx.getText());
+				MsgUtils.errorMessage("unable to find lhs instance in property assignment: " + ctx.getText());
 		    // if this instance is found 
 			else {
 				//System.out.println("RdlModelExtractor enterPost_property_assign: found lhs instance "+ instPathStr); 
@@ -651,16 +646,11 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 			}
 		}
 		
-		// parse instance ref of form: instance_ref_elem(or *)+ (treat as a signal assign)
-		else if (lhsInstanceRef.isValid()) { 
+		// else if lhs instance has no deref it's a signal assign
+		else { 
 			//System.out.println("RdlModelExtractor enterPost_property_assign: sig instance " + instPathStr + ", property=" + property); 
-
-			// search for instance having this path in the current component definition
-			ModComponent comp = activeCompDefs.peek();
-			//System.out.println("RegExtractor: post prop assign active component =" + comp.getId()); 
-			ModInstance regInst = comp.findInstance(lhsInstanceRef.getInstPath());   // search for specified instance recursively  
 			if (regInst == null)
-				Ordt.errorMessage("unable to find lhs instance or property in assignment: " + ctx.getText());
+				MsgUtils.errorMessage("unable to find lhs instance or property in assignment: " + ctx.getText());
 		    // if this instance is found in local component then save the prop assignment
 			else {
 				//System.out.println("RdlModelExtractor enterPost_property_assign: found lhs instance "+ instPathStr); 
@@ -668,29 +658,26 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 				comp.addParameter(instPathStr, property, rhsValue);
 			}
 		}
-
-		// unsupported 
-		else {
-			Ordt.warnMessage("instance_ref " + ctx.getChild(0).getText() + " not supported");			
-		}
 	}
-
 
 	/**
 	 * exit Post_property_assign
 	 */
 	@Override public void exitPost_property_assign(@NotNull SystemRDLParser.Post_property_assignContext ctx) { 
 		activeRules.remove(ctx.getRuleIndex());
+		//System.out.println("RdlModelExtractor exitPost_property_assign: null rhsInstanceRef=" + (rhsInstanceRef==null) + ", text=" + ctx.getText()); 
 		// check for valid rhs references
-		if ((rhsInstanceRef != null) && rhsInstanceRef.isValid()) {
-			//System.out.println("RdlModelExtractor exitPost_property_assign: instance " + rhsInstanceRef.getInstPathStr() + ", property=" + rhsInstanceRef.getProperty() + ", wildcards=" + rhsInstanceRef.hasWildcard()); 
-			ModComponent comp = activeCompDefs.peek();
-			//System.out.println("RegExtractor: post prop assign active component =" + comp.getId()); 
-			ModInstance regInst = comp.findInstance(rhsInstanceRef.getInstPath());   // search for specified instance recursively  
-			if (regInst == null)
-				Ordt.errorMessage("unable to find rhs instance in dynamic property assignment: " + ctx.getText());
-			//else
-			//	Jrdl.infoMessage("found rhs instance in dynamic property assignment: " + ctx.getText());
+		for (InstanceRef rhsRef : rhsInstanceRef) {
+			if (rhsRef.isNotRhsSignal()) {  // not checking signals here since validity can depend on ancestor instance path (if sig visibility in child hier is allowed - tbd) 
+				//System.out.println("RdlModelExtractor exitPost_property_assign: instance " + rhsInstanceRef.getInstPathStr() + ", property=" + rhsInstanceRef.getProperty() + ", wildcards=" + rhsInstanceRef.hasWildcard()); 
+				ModComponent comp = activeCompDefs.peek();
+				//System.out.println("RegExtractor: post prop assign active component =" + comp.getId()); 
+				ModInstance regInst = comp.findInstance(rhsRef.getInstPath());   // search for specified instance recursively  
+				if (regInst == null)
+					MsgUtils.errorMessage("unable to find rhs instance in dynamic property assignment: " + ctx.getText());
+				//else
+				//	MsgUtils.infoMessage("found rhs instance in dynamic property assignment: " + ctx.getText());
+			}
 		}
 	}
 	
@@ -801,20 +788,13 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 	 *  exiting file 
 	 */
 	@Override public void exitRoot(@NotNull SystemRDLParser.RootContext ctx) { 
-		// create list of defined signals recursively from each leaf instance since signal defines are sparse
-		for (ModSignal sig: usrSignals)
-			sig.getDefinedSignalNames(usrSignalNames); 
-		//System.out.println("RdlModelExtract exitRoot: found " + usrSignals.size() + " defined signal nodes with " + usrSignalNames.size() + " defined signals");
-		//for (String sigName: usrSignalNames)
-			//System.out.println("RdlModelExtract exitRoot: found signal " + sigName);
-		//if (sigName.contains("int_detected_cas_tx_afifo2_mem_0")) System.out.println("RdlModelExtract exitRoot: found signal " + sigName);
 	}
 
 	/**
 	 * Detect unimplemented properties
 	 */
 	@Override public void enterUnimplemented_property(@NotNull SystemRDLParser.Unimplemented_propertyContext ctx) {
-		Ordt.warnMessage("property " + ctx.getText() + " not implemented");
+		MsgUtils.warnMessage("property " + ctx.getText() + " not implemented");
 	}
 
 	// ------------------- inline parameter define methods
@@ -838,6 +818,38 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 	 */
 	@Override public void enterSystemverilog_out_parm_assign(@NotNull SystemRDLParser.Systemverilog_out_parm_assignContext ctx) {
 		ExtParameters.assignParameter(ctx.getChild(0).getText(), ctx.getChild(2).getText());		
+	}
+	
+	/** 
+	 * Assign SystemVerilog wrapper module remap commands
+	 */
+	@Override public void enterSystemverilog_wrapper_remap_command(SystemRDLParser.Systemverilog_wrapper_remap_commandContext ctx) {
+		String cmdName = ctx.getChild(0).getText();
+		String signalPattern = ctx.getChild(1).getText();
+		WrapperRemapXform xf;
+		switch(cmdName) {
+		case ("set_passthru"): // 'set_passthru' STR
+			xf = new WrapperRemapXform();  // default is assign 
+		    ExtParameters.addWrapperXform(signalPattern, xf);
+		    //System.out.println("ExtParameters enterSystemverilog_wrapper_remap_command: adding pattern=" + signalPattern + ", " + xf.getType());
+		    break;
+		case ("set_invert"): // 'set_invert' STR
+			xf = new WrapperRemapInvertXform(); 
+		    ExtParameters.addWrapperXform(signalPattern, xf);
+			//System.out.println("ExtParameters enterSystemverilog_wrapper_remap_command: adding pattern=" + signalPattern + ", " + xf.getType()); 
+			break;
+		case ("add_sync_stages"): // 'add_sync_stages' STR NUM ID? ID?
+			int delayStages = Integer.valueOf(ctx.getChild(2).getText());
+		    String clkName = (ctx.getChildCount()>3)? ctx.getChild(3).getText() : null;
+		    String moduleOverride = (ctx.getChildCount()>4)? ctx.getChild(4).getText() : null;
+			xf = new WrapperRemapSyncStagesXform(delayStages, clkName, moduleOverride);  
+			ExtParameters.addWrapperXform(signalPattern, xf);
+			//System.out.println("ExtParameters enterSystemverilog_wrapper_remap_command: adding pattern=" + signalPattern + ", " + xf.getType());
+		    break;
+		default:
+			MsgUtils.errorExit("Unsupported RTL wrapper remap command (" + ctx.getText() + ") specified in parameters.");
+			break;
+		}
 	}
 	
 	/**
@@ -879,6 +891,12 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 	 * Assign xml output parameters
 	 */
 	@Override public void enterXml_out_parm_assign(SystemRDLParser.Xml_out_parm_assignContext ctx) {
+		ExtParameters.assignParameter(ctx.getChild(0).getText(), ctx.getChild(2).getText());		
+	}
+	/**
+	 * Assign pydrvmod output parameters
+	 */
+	@Override public void enterPydrvmod_out_parm_assign(SystemRDLParser.Pydrvmod_out_parm_assignContext ctx) {
 		ExtParameters.assignParameter(ctx.getChild(0).getText(), ctx.getChild(2).getText());		
 	}
 
@@ -930,17 +948,11 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 		return true;
 	}
 
-	@Override
-	/** return true if specified name is a user-defined signal name */
-	public boolean isUserDefinedSignal(String name) {
-		return usrSignalNames.contains(name);  
-	}
-
     // ------------------------------------------------------------------------------------------------
 	
 	/** inner class for carrying extracted rdl instance_ref info */
     class InstanceRef {
-    	private boolean isValid = false;
+    	private boolean isNotRhsSignal = false;
     	private boolean hasWildcard = false;
     	private boolean hasDeRef = false;
     	private String property = null;  // ref is invalid if null
@@ -951,7 +963,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 			int instanceRefChildren = instRefTree.getChildCount();
 			// parse an instance ref of form: instance_ref_elem(or *)+ -> property
 			if ((instanceRefChildren>=3) && "->".equals(instRefTree.getChild(instanceRefChildren-2).getText())) { // DREF is at size - 2
-				isValid = true;
+				isNotRhsSignal = true;
 				hasDeRef = true;
 				property = instRefTree.getChild(instanceRefChildren-1).getText();  // set the property from deref
 				// build an instance path list and detect field wildcards
@@ -963,7 +975,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 			}
 			// else parse instance ref of form: instance_ref_elem(or *)+ - treat as a signal assign
 			else if (instanceRefChildren>=1) { 
-				isValid = isLhs || (instanceRefChildren>1);  // for now rhs singletons are marked is invalid to inhibit checks
+				isNotRhsSignal = isLhs || (instanceRefChildren>1);  // for now rhs singletons are marked is invalid to inhibit checks
 				property = isLhs? "signalAssign" :  null;  // property is signal assignment if lhs and no deRef				
 				// build an instance path list 
 				for (int idx=0; idx<instanceRefChildren; idx += 2) {
@@ -974,8 +986,9 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 			}
 		}
 		
-		public boolean isValid() {
-			return isValid;
+		/** true if this InstanceRef has a dref or is lhs or is not singleton (not sig) - used for checks */
+		public boolean isNotRhsSignal() {
+			return isNotRhsSignal;
 		}
 		
 		public boolean hasWildcard() {
@@ -1075,7 +1088,7 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 					fieldOffsets.push(indexedWidth);  // use width implied by indexed component
 				else
 					fieldOffsets.push(parentOffset);  // just restore previous value
-				//	Ordt.errorExit("Instance " + activeInst.getId() + " does not fit in fieldstruct " + activeInst.getParent().getId());
+				//	MsgUtils.errorExit("Instance " + activeInst.getId() + " does not fit in fieldstruct " + activeInst.getParent().getId());
 			}
 			else
 				fieldOffsets.push(parentOffset + activeInstWidth * activeInst.getRepCount());
@@ -1092,11 +1105,11 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
 	/** display children of context */
 	@SuppressWarnings("unused")
 	private static void displayCtxChildren(ParserRuleContext ctx) {
-		System.out.println(Utils.repeat(' ', ctx.depth()) + "node children:" + ctx.getChildCount());
+		System.out.println(MsgUtils.repeat(' ', ctx.depth()) + "node children:" + ctx.getChildCount());
 		for (int i=0; i<ctx.getChildCount(); i++ ) {
-			System.out.println(Utils.repeat(' ', ctx.depth()) + "   "+ i + ": " + ctx.getChild(i).getText());
+			System.out.println(MsgUtils.repeat(' ', ctx.depth()) + "   "+ i + ": " + ctx.getChild(i).getText());
 				for (int j=0; j<ctx.getChild(i).getChildCount(); j++ ) {
-					System.out.println(Utils.repeat(' ', ctx.depth()) + "     "+ j + ": " + ctx.getChild(i).getChild(j).getText());
+					System.out.println(MsgUtils.repeat(' ', ctx.depth()) + "     "+ j + ": " + ctx.getChild(i).getChild(j).getText());
 				}
 		}	
 	}

@@ -11,7 +11,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 
-import ordt.extract.Ordt;
+import ordt.output.common.MsgUtils;
 import ordt.extract.RegModelIntf;
 import ordt.extract.RegNumber;
 import ordt.extract.RegNumber.NumBase;
@@ -21,12 +21,13 @@ import ordt.output.InstanceProperties;
 import ordt.output.OutputBuilder;
 import ordt.output.RegProperties;
 import ordt.output.RhsReference;
-import ordt.output.systemverilog.SystemVerilogDefinedSignals.DefSignalType;
+import ordt.output.systemverilog.SystemVerilogDefinedOrdtSignals.DefSignalType;
+import ordt.output.systemverilog.common.SystemVerilogLocationMap;
 import ordt.output.systemverilog.common.SystemVerilogModule;
 import ordt.output.systemverilog.common.SystemVerilogSignal;
+import ordt.output.systemverilog.common.io.SystemVerilogIOSignalList;
+import ordt.output.systemverilog.common.io.SystemVerilogIOSignalSet;
 import ordt.output.systemverilog.common.wrap.SystemVerilogWrapModule;
-import ordt.output.systemverilog.io.SystemVerilogIOSignalList;
-import ordt.output.systemverilog.io.SystemVerilogIOSignalSet;
 import ordt.output.AddressableInstanceProperties.ExtType;
 import ordt.parameters.ExtParameters;
 import ordt.parameters.Utils;
@@ -58,10 +59,10 @@ public class SystemVerilogBuilder extends OutputBuilder {
 	private static ValidAddressRanges addressRanges;
 	
 	// define io locations
-	protected static final Integer HW = SystemVerilogDefinedSignals.HW;
-	protected static final Integer LOGIC = SystemVerilogDefinedSignals.LOGIC;
-	protected static final Integer DECODE = SystemVerilogDefinedSignals.DECODE;
-	protected static final Integer PIO = SystemVerilogDefinedSignals.PIO;
+	protected static final Integer HW = SystemVerilogDefinedOrdtSignals.HW;
+	protected static final Integer LOGIC = SystemVerilogDefinedOrdtSignals.LOGIC;
+	protected static final Integer DECODE = SystemVerilogDefinedOrdtSignals.DECODE;
+	protected static final Integer PIO = SystemVerilogDefinedOrdtSignals.PIO;
 	protected boolean usesInterfaces = false;  // detect if sv interfaces are needed  
 
     // define common IO lists
@@ -73,7 +74,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 	// module defines  
 	protected SystemVerilogDecodeModule decoder = new SystemVerilogDecodeModule(this, DECODE, decodeClk);
 	protected SystemVerilogLogicModule logic = new SystemVerilogLogicModule(this, LOGIC, logicClk);
-	protected SystemVerilogModule top = new SystemVerilogModule(this, 0, defaultClk, getDefaultReset());  // TODO was DECODE|LOGIC
+	protected SystemVerilogModule top = new SystemVerilogModule(this, 0, defaultClk, getDefaultReset(), ExtParameters.sysVerUseAsyncResets());
 	
 	private  List<String> tempAssignList = new ArrayList<String>();    // temp list of assign statements for current register (used in finishReg)
 
@@ -96,6 +97,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		setLegacyVerilog(false);  // rtl uses systemverilog constructs
 		initIOLists(null);  // setup IO lists for logic, decode, and top modules
 		decoder.setPrimaryInterfaceType(ExtParameters.getSysVerRootDecoderInterface()); // set root pio interface type from specified params
+		RhsReference.setInstancePropertyStack(instancePropertyStack);  // update pointer to the instance stack for rhs reference evaluation
 		model.getRoot().generateOutput(null, this);   // generate output structures recursively starting at model root
 	}
 	
@@ -141,6 +143,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 			else if (width == 16) decoder.setPrimaryInterfaceType(SVDecodeInterfaceTypes.RING16); 
 			else if (width == 32) decoder.setPrimaryInterfaceType(SVDecodeInterfaceTypes.RING32); 			
 		}
+		RhsReference.setInstancePropertyStack(instancePropertyStack);  // update pointer to the instance stack for rhs reference evaluation
 
 	    // now generate output starting at this regmap
 		//System.out.println("SystemVerilogBuilder: pre generate - regset inst id=" + regSetProperties.getId() + ", ext=" + regSetProperties.getExternalType() + ", amap=" + regSetProperties.isAddressMap() + ", inst stack top=" + instancePropertyStack.peek().getId());
@@ -152,6 +155,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 	    this.regSetProperties.setExternalType(topRegProperties.getExternalType()); // restore parent ext type now that child gen is complete
 		//System.out.println("SystemVerilogBuilder: post generate - regset inst id=" + regSetProperties.getId() + ", ext=" + regSetProperties.getExternalType() + ", amap=" + regSetProperties.isAddressMap() + ", inst stack top=" + instancePropertyStack.peek().getId());
 		//System.out.println("SystemVerilogBuilder: post generate - topreg inst id=" + topRegProperties.getId() + ", ext=" + topRegProperties.getExternalType()+ ", builderID=" + getBuilderID());
+		RhsReference.setInstancePropertyStack(parentBuilder.instancePropertyStack);  // restore pointer to the parent instance stack
 	}
 	
 	/** initialize signal lists used by generated modules 
@@ -171,7 +175,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		top.useIOList(hwSigList, HW);
 		top.useIOList(pioSigList, PIO); 
 		// copy the hw signal list stack
-		if (parentBuilder != null) hwSigList.copyActiveSetStack(parentBuilder.hwSigList);
+		if (parentBuilder != null) hwSigList.copyActiveSetStack(parentBuilder.hwSigList, DefSignalType.SIGSET);
 	}
 	
 	/** set legacyVerilog
@@ -206,7 +210,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		
 		// set as a default reset if specified (exit if specified since these are handled separately from other sigs)
 		if (signalProperties.isDefaultReset()) {
-			if (resetsLocked) Ordt.errorMessage("cpuif_reset property ignored for signal " + signalProperties.getInstancePath());
+			if (resetsLocked) MsgUtils.errorMessage("cpuif_reset property ignored for signal " + signalProperties.getInstancePath());
 			else {
 				defaultReset = signalProperties.getFullSignalName(DefSignalType.USR_SIGNAL);
 				defaultResetActiveLow = signalProperties.isActiveLow();
@@ -214,7 +218,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 			}
 		}
 		else if (signalProperties.isLogicReset()) {
-			if (resetsLocked) Ordt.errorMessage("field_reset property ignored for signal " + signalProperties.getInstancePath());
+			if (resetsLocked) MsgUtils.errorMessage("field_reset property ignored for signal " + signalProperties.getInstancePath());
 			else {
 				logicReset = signalProperties.getFullSignalName(DefSignalType.USR_SIGNAL);
 				logicResetActiveLow = signalProperties.isActiveLow();
@@ -236,7 +240,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 			List<RhsReference> rhsRefList = signalProperties.getAssignExpr().getRefList(); 
 			for (RhsReference ref: rhsRefList) {
 				String refName = ref.getReferenceName(signalProperties, false);   
-				refName = logic.resolveAsSignalOrField(refName);
+				if (ref.isUserSignal()) refName = logic.saveUserSignalInfo(refName);
 				logic.addRhsSignal(refName, getInstancePath() , ref.getRawReference());				
 				//System.out.println("SystemVerilogBuilder addSignal, rhs ref=" + refName + ", lhs sig=" + getInstancePath() + ", raw rhs ref=" + ref.getRawReference());
 			}
@@ -367,7 +371,8 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		   if (regProperties.isExternalDecode()) {
 			   //System.out.println("SystemVerilogBuilder.addRootExternalRegisters externalDecode, inst=" + regProperties.getInstancePath() + ", base=" + regProperties.getBaseAddress() + ", size=" + getExternalRegBytes());
 			   //addressRanges.list();
-			   addressRanges.addGap(regProperties.getBaseAddress(), getExternalRegBytes(), regProperties.getInstancePath());
+			   addressRanges.addGap(regProperties.getBaseAddress(), regProperties.getExtractInstance().getAlignedSize(), regProperties.getInstancePath());
+
 			   //addressRanges.list();
 			   return;
 		   }
@@ -377,7 +382,14 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		   // for now, inhibit encap of all except PARALLEL
 		   if (!regProperties.hasExternalType(ExtType.PARALLEL) && (regProperties.useInterface() || regProperties.useStruct())) {
 			   regProperties.setUseInterface(false);regProperties.setUseStruct(false);
-			   Ordt.warnMessage("Interface and structure encaps are not currently supported on non-PARALLEL external interfaces, inst= " + regProperties.getInstancePath());
+			   MsgUtils.warnMessage("Interface and structure encaps are not currently supported on non-PARALLEL external interfaces, inst= " + regProperties.getInstancePath());
+		   }
+		   
+		   // if a rep level external, change IO ancestors to remove reps
+		   if (regProperties.hasExternalRepLevel()) {
+			   int repLevels = regProperties.getExternalType().getRepLevel();
+			   endIOHierarchy(repLevels);  // remove rep_level IO ancestors
+			   startIOHierarchy(repLevels, true); // restore rep_level IO ancestors with no reps
 		   }
 		   startIOHierarchy(regProperties, true);  // if an interface is specified add it with single rep override
 
@@ -398,21 +410,29 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		   }
 		   
 		   // generate specific i/f type for this external region
-		   if (regProperties.hasExternalType(ExtType.PARALLEL)) {
-			   // pick up any instance overrides
-			   boolean optimize = regProperties.getExternalType().hasParm("optimize")? true :
-				   regProperties.getExternalType().hasParm("no_optimize")? false : ExtParameters.sysVerOptimizeParallelExternals();
-			   boolean keepNack = regProperties.getExternalType().hasParm("keep_nack")? true : false;
-			   decoder.generateExternalInterface_PARALLEL(regProperties, optimize, keepNack);
+		   if (regProperties.definesExtControls()) {
+			   if (regProperties.hasExternalType(ExtType.PARALLEL)) {
+				   // pick up any instance overrides
+				   boolean optimize = regProperties.getExternalType().hasParm("optimize")? true :
+					   regProperties.getExternalType().hasParm("no_optimize")? false : ExtParameters.sysVerOptimizeParallelExternals();
+				   boolean keepNack = regProperties.getExternalType().hasParm("keep_nack")? true : false;
+				   decoder.generateExternalInterface_PARALLEL(regProperties, getOrderedFieldList(), optimize, keepNack);
+			   }
+			   else if (regProperties.hasExternalType(ExtType.BBV5)) decoder.generateExternalInterface_BBV5(regProperties);
+			   else if (regProperties.hasExternalType(ExtType.SRAM)) decoder.generateExternalInterface_SRAM(regProperties);
+			   else if (regProperties.hasExternalType(ExtType.SERIAL8)) decoder.generateExternalInterface_SERIAL8(regProperties);
+			   else if (regProperties.hasExternalType(ExtType.RING)) decoder.generateExternalInterface_RING(regProperties.getExternalType().getParm("width"), regProperties);
 		   }
-		   else if (regProperties.hasExternalType(ExtType.BBV5)) decoder.generateExternalInterface_BBV5(regProperties);
-		   else if (regProperties.hasExternalType(ExtType.SRAM)) decoder.generateExternalInterface_SRAM(regProperties);
-		   else if (regProperties.hasExternalType(ExtType.SERIAL8)) decoder.generateExternalInterface_SERIAL8(regProperties);
-		   else if (regProperties.hasExternalType(ExtType.RING)) decoder.generateExternalInterface_RING(regProperties.getExternalType().getParm("width"), regProperties);
 		   
 		   endIOHierarchy(regProperties);  // close out interface 
+		   // if a rep level external, change IO ancestors to store reps
+		   if (regProperties.hasExternalRepLevel()) {
+			   int repLevels = regProperties.getExternalType().getRepLevel();
+			   endIOHierarchy(repLevels);  // remove rep_level IO ancestors
+			   startIOHierarchy(repLevels, false); // restore rep_level IO ancestors with reps
+		   }
 	}
-	
+
 	/** add a non-root addressmap - overridden by child builders (sv builder) */
 	@Override
 	protected void addNonRootExternalAddressMap() {
@@ -445,7 +465,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 	/** finish a register map for a particular output */
 	@Override
 	public  void finishRegMap() {	
-		//Ordt.warnMessage("SystemVerilogBuilder: finishRegMap, builder=" + getBuilderID());
+		//MsgUtils.warnMessage("SystemVerilogBuilder: finishRegMap, builder=" + getBuilderID());
 		//System.out.println("SystemVerilogBuilder: finishRegMap: rqto_err_log_padoody2 #0 isRhs=" + definedSignals.get("rqto_err_log_padoody2").isRhsReference());
 		//logic.resolveNames();
 		//System.out.println("SystemVerilogBuilder: finishRegMap: rqto_err_log_padoody2 #1 isRhs=" + definedSignals.get("rqto_err_log_padoody2").isRhsReference());
@@ -597,14 +617,34 @@ public class SystemVerilogBuilder extends OutputBuilder {
 	}
 	
 	/** add IO hierarchy level (no singleRep override) */
-	private void startIOHierarchy(InstanceProperties properties) {
+	void startIOHierarchy(InstanceProperties properties) {
 		startIOHierarchy(properties, false);
+	}
+	
+	/** add specified number of IO hierarchy levels using current ancestors from the instance stack (last elem not included)
+	 * @param levels - number of IO levels to start
+	 * @param singleRep - if true, only a single rep of each hierarchy level will be added to IO
+	 */
+	private void startIOHierarchy(int levels, boolean singleRep) {
+		int startIdx = instancePropertyStack.size() - levels - 1;
+		if (startIdx < 0) return;
+		for (int i=0; i<levels; i++) {
+			int stackIdx = startIdx + i;
+			startIOHierarchy(instancePropertyStack.elementAt(stackIdx), singleRep);
+		}
 	}
 
 	/** close out active IO hierarchy level */
-	private void endIOHierarchy(InstanceProperties properties) {
+	void endIOHierarchy(InstanceProperties properties) {
 			//System.out.println("*** Popping interface:" + properties.getBaseName());
 			hwSigList.popIOSignalSet();
+	}
+	
+	/** end specified number of IO hierarchy levels
+	 * @param levels - number of IO levels to end
+	 */
+	private void endIOHierarchy(int levels) {
+		for (int i=0; i<levels; i++) endIOHierarchy(regProperties);
 	}
 
 	/** add BASE_ADDR parameter to a module */
@@ -760,13 +800,6 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		}
 	
 	}	
-	
-	/** return string list of signal names from verilogsig list */
-	protected static List<String> getNameList (List<SystemVerilogSignal> sigList) {
-		List<String> retStr = new ArrayList<String>();
-		for (SystemVerilogSignal vsig : sigList) retStr.add(vsig.getDefName());
-		return retStr;
-	}
 		
 	//---------------------------- methods to output verilog ----------------------------------------
 
@@ -777,7 +810,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 	@Override
 	public void write(String outName, String description, String commentPrefix) {		
 		// before starting write, check that this addrmap is valid
-		if (decoder.getDecodeList().isEmpty()) Ordt.errorExit("Minimum allowed address map size is " + this.getMinRegByteWidth() + "B (addrmap=" + getAddressMapName() + ")");
+		if (decoder.getDecodeList().isEmpty()) MsgUtils.errorExit("Minimum allowed address map size is " + this.getMinRegByteWidth() + "B (addrmap=" + getAddressMapName() + ")");
 
 		// determine if a single output file or multiple
 		boolean multipleOutputFiles = outName.endsWith("/");
@@ -910,7 +943,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		// create wrapper module 
 		SystemVerilogWrapModule intfWrapper = createTopWrapperModule(useInterfaces);
 		// write xform modules
-		intfWrapper.writeXformModules(separateXformFiles, outPrefix, outSuffix, commentPrefix); 
+		if (ExtParameters.sysVerGenerateIwrapXformModules()) intfWrapper.writeXformModules(separateXformFiles, outPrefix, outSuffix, commentPrefix); 
 		// write wrapper module
 		intfWrapper.write();
 
@@ -929,14 +962,16 @@ public class SystemVerilogBuilder extends OutputBuilder {
 	 * @param outPrefix - prefix to be used on generated xform modules if using separate files
 	 * @param outSuffix- suffix to be used on generated xform modules if using separate files 
 	 */
-	protected  SystemVerilogWrapModule createTopWrapperModule(boolean useInterfaces) {		
-		SystemVerilogWrapModule intfWrapper = new SystemVerilogWrapModule(this, 0, defaultClk, getDefaultReset());
+	protected  SystemVerilogWrapModule createTopWrapperModule(boolean useInterfaces) {	
+		int WRAPPER = SystemVerilogLocationMap.getId("WRAPPER");
+		SystemVerilogWrapModule intfWrapper = new SystemVerilogWrapModule(this, WRAPPER, defaultClk, getDefaultReset(), ExtParameters.sysVerUseAsyncResets());
 		intfWrapper.setName(getModuleName() + "_pio_iwrap");
 		intfWrapper.setUseInterfaces(useInterfaces);
 		// add pio_top instance
 		intfWrapper.addInstance(top, "pio");
         // create wrapper
-		intfWrapper.generateWrapperInfo();
+		intfWrapper.generateWrapperInfo(ExtParameters.sysVerWrapperXformMap());
+		//System.out.println("SystemVerilogWrapModule createTopWrapperModule: internal locs=" + intfWrapper.getInsideLocs() + ", outside locs=" + intfWrapper.getOutsideLocs());
 		return intfWrapper;
 	}
 
@@ -950,7 +985,7 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		
 		// before starting write, check that this addrmap is valid
 		//int mapSize = this.getMapAddressWidth();
-		if (decoder.getDecodeList().isEmpty()) Ordt.errorExit("Minimum allowed address map size is " + this.getMinRegByteWidth() + "B (addrmap=" + getAddressMapName() + ")");
+		if (decoder.getDecodeList().isEmpty()) MsgUtils.errorExit("Minimum allowed address map size is " + this.getMinRegByteWidth() + "B (addrmap=" + getAddressMapName() + ")");
 		//System.out.println("SystemVerilogBuilder write: Minimum allowed address map size is " + (this.getMinRegByteWidth() * 2) + "B, mapSize=" + getCurrentMapSize() + " - " + mapSize + "b (addrmap=" + getAddressMapName() + ")");
 		//System.out.println("SystemVerilogBuilder write:   Decoder elements= " + decoder.getDecodeList().size());
 
@@ -1178,9 +1213,4 @@ public class SystemVerilogBuilder extends OutputBuilder {
 		   tempAssignList.add(assignStr);		
 	}
 	
-	/** return true if specified name is a user-defined signal name */
-	public boolean isUserDefinedSignal(String name) {
-		return model.isUserDefinedSignal(name);  
-	}
-
 }

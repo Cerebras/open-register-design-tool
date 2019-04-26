@@ -7,22 +7,22 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
-import ordt.extract.Ordt;
+import ordt.output.common.MsgUtils;
 import ordt.extract.RegNumber;
 import ordt.extract.RegNumber.NumBase;
 import ordt.extract.RegNumber.NumFormat;
 import ordt.output.FieldProperties;
 import ordt.output.RhsReference;
 import ordt.output.SignalProperties;
-import ordt.output.systemverilog.SystemVerilogDefinedSignals.DefSignalType;
+import ordt.output.systemverilog.SystemVerilogDefinedOrdtSignals.DefSignalType;
 import ordt.output.systemverilog.common.SystemVerilogCoverGroups;
 import ordt.output.systemverilog.common.SystemVerilogModule;
 import ordt.output.systemverilog.common.SystemVerilogSignal;
-import ordt.output.systemverilog.io.SystemVerilogIOSignalList;
+import ordt.output.systemverilog.common.io.SystemVerilogIOSignalList;
 import ordt.output.FieldProperties.RhsRefType;
+import ordt.output.JspecSubCategory;
 import ordt.output.RegProperties;
 import ordt.parameters.ExtParameters;
-import ordt.parameters.Utils;
 
 /** derived class for logic module 
  *  note: this class is tightly coupled with builder - uses several builder methods
@@ -34,8 +34,8 @@ import ordt.parameters.Utils;
  *          at this point signalProperties is updated and signal assignment has been extracted via setAssignExpression in extractProperties
  *          signalProperties is added to module-specific userDefinedSignals using sig_* prefix string name as key 
  *          if an assignment is found, output port strings are created
- *             for each rhs reference, resolveAsSignalOrField is called, addRhsSignal is called
- *                resolveAsSignalOrField - if in userDefinedSignals, converts to name to sig_* form and marks the sig as a rhs reference << FIXME problem if sig assign order is wrong
+ *             for each rhs reference, saveUserSignalInfo is called, addRhsSignal is called
+ *                saveUserSignalInfo - if in userDefinedSignals, converts to name to sig_* form and marks the sig as a rhs reference
  *                addRhsSignal - adds signal to list of rhs signals
  *          if no assignment an input port is generated
  *    - after generate, createSignalAssigns is called, which resolves all rhs signals in assign rhs
@@ -54,7 +54,7 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 	protected List<IntrDiagInfo> intrInfoList = new ArrayList<IntrDiagInfo>();  // saved list of interrupt signal info for diagnostic module gen
 	
 	public SystemVerilogLogicModule(SystemVerilogBuilder builder, int insideLocs, String defaultClkName) {
-		super(builder, insideLocs, defaultClkName, builder.getDefaultReset());
+		super(builder, insideLocs, defaultClkName, builder.getDefaultReset(), ExtParameters.sysVerUseAsyncResets());
 		this.builder = builder;  // save reference to calling builder
 	}
 	
@@ -115,8 +115,10 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 				   if (fieldProperties.hasReset()) {
 					   addVectorWire(fieldRegisterName, 0, fieldProperties.getFieldWidth());  // add field to wire define list
 					   addWireAssign(fieldRegisterName + " = " + getResetValueString() + ";");
+					   if (fieldProperties.hasRef(RhsRefType.RESET_SIGNAL))
+						   MsgUtils.warnMessage("resetsignal property will have no effect in constant field " + fieldProperties.getInstancePath());
 				   }
-				   else Ordt.errorMessage("invalid field constant - no reset value for non-writable field " + fieldProperties.getInstancePath());
+				   else MsgUtils.errorMessage("invalid field constant - no reset value defined for non-writable field " + fieldProperties.getInstancePath());
 			   }
 		   }
 	}
@@ -127,26 +129,29 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 		   String fieldRegisterNextName = fieldProperties.getFullSignalName(DefSignalType.FIELD_NEXT);  //"reg_" + hwBaseName + "_next";
 		   addVectorReg(fieldRegisterName, 0, fieldProperties.getFieldWidth());  // add field registers to define list
 		   addVectorReg(fieldRegisterNextName, 0, fieldProperties.getFieldWidth());  // we'll be using next value since complex assign
+		   String groupName = regProperties.getBaseName();
 		   // generate flop reset stmts
 		   if (fieldProperties.hasReset()) {
 			   String resetSignalName = builder.getDefaultReset();
 			   boolean resetSignalActiveLow = builder.getDefaultResetActiveLow();
-			   if (builder.getLogicReset() != null) {
+			   if (fieldProperties.hasRef(RhsRefType.RESET_SIGNAL)) {
+				   resetSignalActiveLow = false;  // user defined resets are active high 
+				   resetSignalName = resolveRhsExpression(RhsRefType.RESET_SIGNAL);
+				   groupName += " (reset=" + resetSignalName + ")";  // use a different always group for each unique resetsignal
+				   //System.out.println("SystemVerilogModule genFieldRegWriteStmts: field " + fieldProperties.getId() + " has reset signal=" + resetSignalName);
+				   if (!(definedSignals.contains(resetSignalName) || userDefinedSignals.containsKey(resetSignalName)))
+					   MsgUtils.errorMessage("reset signal " + resetSignalName + " for field " + fieldProperties.getInstancePath() + " has not been defined");
+			   }
+			   else if (builder.getLogicReset() != null) {
 				   resetSignalName = builder.getLogicReset();
 				   resetSignalActiveLow = builder.getLogicResetActiveLow();
 			   }
-			   else if (fieldProperties.hasRef(RhsRefType.RESET_SIGNAL)) {
-				   resetSignalActiveLow = false;  // user defined resets are active high 
-				   resetSignalName = resolveRhsExpression(RhsRefType.RESET_SIGNAL);
-				   if (!(definedSignals.contains(resetSignalName) || userDefinedSignals.containsKey(resetSignalName)))
-					   Ordt.errorMessage("reset signal " + resetSignalName + " for field " + fieldProperties.getInstancePath() + " has not been defined");
-			   }
 			   addReset(resetSignalName, resetSignalActiveLow);
-			   addResetAssign(regProperties.getBaseName(), resetSignalName, fieldRegisterName + " <= #1 " + getResetValueString() + ";");  // ff reset assigns			   
+			   addResetAssign(groupName, resetSignalName, fieldRegisterName + " <= " + ExtParameters.sysVerSequentialAssignDelayString() + "" + getResetValueString() + ";");  // ff reset assigns			   
 		   }
-		   else if (!ExtParameters.sysVerSuppressNoResetWarnings()) Ordt.warnMessage("field " + fieldProperties.getInstancePath() + " has no reset defined");
+		   else if (!ExtParameters.sysVerSuppressNoResetWarnings()) MsgUtils.warnMessage("field " + fieldProperties.getInstancePath() + " has no reset defined");
 		   
-		   addRegAssign(regProperties.getBaseName(),  fieldRegisterName + " <= #1  " + fieldRegisterNextName + ";");  // assign next to flop
+		   addRegAssign(groupName,  fieldRegisterName + " <= " + ExtParameters.sysVerSequentialAssignDelayString() + " " + fieldRegisterNextName + ";");  // assign next to flop
 	}
 
 	/** create statements to set value of next based on field settings */ 
@@ -256,7 +261,14 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 	 *  (this method is for resolving refs defined in fieldProperties, not signalProperties) */
 	private String resolveRhsExpression(RhsRefType rType) {
 		String retExpression = fieldProperties.getRefRtlExpression(rType, false);   // create signal name from rhs
-		retExpression = resolveAsSignalOrField(retExpression);
+		if (fieldProperties.getRef(rType).isUserSignal()) retExpression = saveUserSignalInfo(retExpression);
+		// detect remote signals (from another logic module) that will become a new input to current module
+		boolean isRemoteSignal = !fieldProperties.getRef(rType).isSameAddrmap() && fieldProperties.getRef(rType).isRegRef();  // only halt/intr remotes allowed currently
+		if (isRemoteSignal) {
+			retExpression = "remote_" + retExpression;
+			if (!rhsSignals.containsKey(retExpression))
+				addSimpleScalarFrom(SystemVerilogBuilder.HW, retExpression);  // add remote input if not already added
+		}
 		addRhsSignal(retExpression, builder.getInstancePath(), fieldProperties.getRef(rType).getRawReference() );
 		return retExpression;
 	}
@@ -321,7 +333,7 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 		   // if a sw read set
 		   if (fieldProperties.isRset()) {
 			   addPrecCombinAssign(regBaseName, swPrecedence, "if (" + decodeToLogicReName + swWeStr + ") " + fieldRegisterNextName + " = " + 
-		           fieldProperties.getFieldWidth() + "'b" + Utils.repeat('1', fieldProperties.getFieldWidth()) + ";");
+		           fieldProperties.getFieldWidth() + "'b" + MsgUtils.repeat('1', fieldProperties.getFieldWidth()) + ";");
 		   }
 		   // if sw rclr 
 		   else if (fieldProperties.isRclr()) {
@@ -355,7 +367,7 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 		   int fieldWidth = fieldProperties.getFieldWidth();
 		   
 		   // always create intr diag info (only save if a leaf intr)
-		   IntrDiagInfo intrInfo = new IntrDiagInfo(fieldRegisterName, fieldWidth, fieldProperties.getInstancePath());
+		   IntrDiagInfo intrInfo = new IntrDiagInfo(fieldRegisterName, fieldWidth, fieldProperties.getInstancePath(), fieldProperties.getSubCategory());
 		   
 		   // if register is not already interrupt, then create signal assigns and mark for output creation in finishRegister
 		   String intrOutput = regProperties.getFullSignalName(DefSignalType.L2H_INTR);
@@ -419,7 +431,7 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 			   // if not LEVEL, need to store previous intr value
 			   if (fieldProperties.getIntrType() != FieldProperties.IntrType.LEVEL) {
 				   addVectorReg(prevIntrName, 0, fieldProperties.getFieldWidth());
-				   addRegAssign(regProperties.getBaseName(), prevIntrName  +  " <= #1 " + hwToLogicIntrName + ";");
+				   addRegAssign(regProperties.getBaseName(), prevIntrName  +  " <= " + ExtParameters.sysVerSequentialAssignDelayString() + "" + hwToLogicIntrName + ";");
 				   // if posedge detect
 				   if (fieldProperties.getIntrType() == FieldProperties.IntrType.POSEDGE) 
 					   detectStr = "(" + hwToLogicIntrName + " & ~" + prevIntrName + ")";
@@ -450,7 +462,7 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 	       if (ExtParameters.sysVerPulseIntrOnClear()) {
 			   String intrDlyName = fieldProperties.getFullSignalName(DefSignalType.INTR_DLY); 	   
 			   addVectorReg(intrDlyName, 0, fieldProperties.getFieldWidth());
-			   addRegAssign(regProperties.getBaseName(), intrDlyName  +  " <= #1 " + fieldRegisterName + ";");
+			   addRegAssign(regProperties.getBaseName(), intrDlyName  +  " <= " + ExtParameters.sysVerSequentialAssignDelayString() + "" + fieldRegisterName + ";");
 		       addPrecCombinAssign(regProperties.getBaseName(), hwPrecedence, intrClear + " = " + intrClear  + orStr + intrDlyName + " & ~" + fieldRegisterName + endStr);  // negedge detect
 	       }
 
@@ -504,7 +516,7 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 				   addHwScalar(DefSignalType.L2H_OVERFLOW);   // add hw overflow output
 				   addScalarReg(logicToHwOverflowName);  
 				   addRegAssign(regProperties.getBaseName(), logicToHwOverflowName +
-						   " <= #1 " + nextCountName + "[" + fieldWidth + "] & ~" +  logicToHwOverflowName + ";");  // only active for one cycle  
+						   " <= " + ExtParameters.sysVerSequentialAssignDelayString() + "" + nextCountName + "[" + fieldWidth + "] & ~" +  logicToHwOverflowName + ";");  // only active for one cycle  
 			   }
 
 			   // if a ref is being used for increment assign it, else add an input
@@ -527,7 +539,7 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 				   addHwScalar(DefSignalType.L2H_UNDERFLOW);   // add hw underflow output
 				   addScalarReg(logicToHwUnderflowName);  
 				   addRegAssign(regProperties.getBaseName(), logicToHwUnderflowName +
-						   " <= #1 " + nextCountName + "[" + fieldWidth + "] & ~" +  logicToHwUnderflowName + ";");  // only active for one cycle  
+						   " <= " + ExtParameters.sysVerSequentialAssignDelayString() + "" + nextCountName + "[" + fieldWidth + "] & ~" +  logicToHwUnderflowName + ";");  // only active for one cycle  
 			   }
 
 			   // if a ref is being used for decrement assign it, else add an input
@@ -766,25 +778,19 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 		userDefinedSignals.put(sigName, signalProperties); 
 	}
 	
-	/** determine if a rhs reference is a signal or a field and return modified name if a signal.
-	 *  if a signal, it is tagged as a rhsReference in userDefinedSignals list. 
-	 * this method should only be called after entire signal list is created at addrmap exit */
-	public String resolveAsSignalOrField(String ref) {
-		String sigNameStr = ref.replaceFirst("rg_", "sig_");  // speculatively convert to signal prefix for lookup
-		//if (ref.contains("int_detected_cas_tx_afifo2_mem_0")) System.out.println("SystemVerilogLogicModule resolveAsSignalOrField: ref=" + ref + ", isUserDefinedSignal(sigNameStr)=" + builder.isUserDefinedSignal(sigNameStr));
-		if ((ref.startsWith("rg_") && builder.isUserDefinedSignal(sigNameStr))) {  // check that signal is in pre-computed set  
-			// the local list may not have been populated, but can load with null to indicate that it's been seen on rhs of an assign
-			if (!userDefinedSignals.containsKey(sigNameStr)) {
-				//System.out.println("SystemVerilogLogicModule resolveAsSignalOrField: " + sigNameStr + " was found in master list, but not in module-specific list");
-				userDefinedSignals.put(sigNameStr, null);
-			}
-			else {
-				//if (userDefinedSignals.get(sigNameStr)==null) System.out.println("SystemVerilogLogicModule resolveAsSignalOrField: marking null signal " + sigNameStr + " as rhsReference");
-				if (userDefinedSignals.get(sigNameStr)!=null) userDefinedSignals.get(sigNameStr).setRhsReference(true);  // indicate that this signal is used internally as rhs  
-			}
-			return sigNameStr;  // return signal form if found
-		}	
-		return ref;  // no name change by default
+	/** store user-defined signal as rhs reference in current module and return name with modified prefix */
+	public String saveUserSignalInfo(String rawName) {
+		String sigName = rawName.replaceFirst("rg_", "sig_");  // convert to signal prefix
+		// the local list may not have been populated, but can load with null to indicate that it's been seen on rhs of an assign
+		if (!userDefinedSignals.containsKey(sigName)) {
+			//System.out.println("SystemVerilogLogicModule saveUserSignalInfo: " + sigName + " was found in master list, but not in module-specific list");
+			userDefinedSignals.put(sigName, null);
+		}
+		else {
+			//if (userDefinedSignals.get(sigNameStr)==null) System.out.println("SystemVerilogLogicModule saveUserSignalInfo: marking null signal " + sigNameStr + " as rhsReference");
+			if (userDefinedSignals.get(sigName)!=null) userDefinedSignals.get(sigName).setRhsReference(true);  // indicate that this signal is used internally as rhs  
+		}
+		return sigName;  // return signal form if found
 	}
 	
 	/** loop through user defined signals and add assign statements to set these signals - call after build when userDefinedSignals is valid */  
@@ -803,12 +809,12 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 					if (ref.isWellFormedSignalName()) {
 						String refName = ref.getReferenceName(sig, false); 
 						//System.out.println("SystemVerilogLogicModule createSignalAssigns: sig prop inst=" + sig.getInstancePath() + ", refName=" + refName);
-						refName = resolveAsSignalOrField(refName);  // resolve and tag any signals as rhsReference
+						if (ref.isUserSignal()) refName = saveUserSignalInfo(refName);  // tag any signals as rhsReference
 						// check for a valid signal
 						if (!this.hasDefinedSignal(refName) && (rhsSignals.containsKey(refName))) {  
 							RhsReferenceInfo rInfo = rhsSignals.get(refName);
 							//System.out.println("SystemVerilogLogicModule createSignalAssigns: refName=" + refName + ", hasDefinedSignal=" + this.hasDefinedSignal(refName) + ", rhsSignals.containsKey=" + rhsSignals.containsKey(refName));
-							Ordt.errorMessage("unable to resolve " + rInfo.getRhsRefString() + " referenced in rhs dynamic property assignment for " + rInfo.getLhsInstance()); 
+							MsgUtils.errorMessage("unable to resolve " + rInfo.getRhsRefString() + " referenced in rhs dynamic property assignment for " + rInfo.getLhsInstance()); 
 						}						
 					}
 				}
@@ -829,7 +835,7 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 				else {
 					// if not used internally, issue an error
 					if (!sig.isRhsReference())
-						Ordt.errorMessage("user defined signal " + sig.getFullSignalName(DefSignalType.USR_SIGNAL) + " is not used");		
+						MsgUtils.errorMessage("user defined signal " + sig.getFullSignalName(DefSignalType.USR_SIGNAL) + " is not used");		
 				}
 			}
 		}
@@ -854,10 +860,10 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 			if (rhsSignals.containsKey(preResolveName)) {
 				RhsReferenceInfo rInfo = rhsSignals.get(preResolveName);
 				//System.out.println("SystemVerilogLogicModule checkSignalName: preResolveName=" + preResolveName + " found in rhsSignals, but postResolveName=" + postResolveName + " not found in definedSignals");
-				Ordt.errorMessage("unable to resolve " + rInfo.getRhsRefString() + " referenced in rhs dynamic property assignment for " + rInfo.getLhsInstance()); 
+				MsgUtils.errorMessage("unable to resolve " + rInfo.getRhsRefString() + " referenced in rhs dynamic property assignment for " + rInfo.getLhsInstance()); 
 			}
 			else
-				Ordt.errorMessage("unable to resolve signal " + postResolveName + " inferred in rhs dynamic property assignment" ); 
+				MsgUtils.errorMessage("unable to resolve signal " + postResolveName + " inferred in rhs dynamic property assignment" ); 
 		}
 	}
 	
@@ -899,9 +905,8 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 
 	/** create an interrupt assertion bind module */
 	public SystemVerilogModule createIntrBindModule() {
-		SystemVerilogModule intrBindMod = new SystemVerilogModule(builder, getInsideLocs(), defaultClkName, builder.getDefaultReset());
 		String intrBindModName = getName() + "_intr_bind";
-		intrBindMod.setName(intrBindModName);
+		SystemVerilogModule intrBindMod = new SystemVerilogModule(builder, intrBindModName, getInsideLocs(), defaultClkName, builder.getDefaultReset(), ExtParameters.sysVerUseAsyncResets());
 		Integer defaultOutputLoc = getOutsideLocs();
 		SystemVerilogIOSignalList bindIOList = new SystemVerilogIOSignalList("default");
 		intrBindMod.useIOList(bindIOList, defaultOutputLoc);
@@ -914,54 +919,101 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 			intrBindMod.addStatement("//------- intr detect controls are set in global package ordt_dv_bind_controls");
 			intrBindMod.addStatement("//------- which includes the following for intr control:");
 			intrBindMod.addStatement("//package ordt_dv_bind_controls;");
-			intrBindMod.addStatement("//   bit enable_intr_check; // if 1 shut down all intr assertions");
-			intrBindMod.addStatement("//   bit allow_intr;        // if 1 intr will be flagged as warning, not error");
+			intrBindMod.addStatement("//   bit enable_intr_check;  // if 0 shut down all intr assertions");
+			intrBindMod.addStatement("//   bit only_error_asserts; // if 1 shut down all non-error intr assertions");
+			intrBindMod.addStatement("//   bit allow_intr;         // if 1 and use_subcategories isn't set, all intr outputs will be warning, not error");
+			intrBindMod.addStatement("//   bit use_subcategories;  // if 1 specified subcategory will be used to set assert severity (only if info currently)");
+			intrBindMod.addStatement("//   bit use_enable_mask;    // if 1 intr will only assert if its enable or mask value is set");
+			intrBindMod.addStatement("//   bit use_halt;           // if 1 halt mask/enable will be used when use_enable_mask is set");
 			intrBindMod.addStatement("//endpackage");
-			intrBindMod.addStatement("//ordt_dv_bind_controls::enable_intr_check = 1'b1; // if 1 shut down all intr assertions");
-			intrBindMod.addStatement("//ordt_dv_bind_controls::allow_intr = 1'b1;        // if 1 intr will be flagged as warning, not error");
+			intrBindMod.addStatement("//ordt_dv_bind_controls::enable_intr_check = 1'b1;  // if 0 shut down all intr assertions");
+			intrBindMod.addStatement("//ordt_dv_bind_controls::only_error_asserts = 1'b0; // if 1 shut down all non-error intr assertions");
+			intrBindMod.addStatement("//ordt_dv_bind_controls::allow_intr = 1'b0;         // if 1 and use_subcategories isn't set, all intr outputs will be warning, not error");
+			intrBindMod.addStatement("//ordt_dv_bind_controls::use_subcategories = 1'b1;  // if 1 specified subcategory will be used to set assert severity (only if info currently)");
+			intrBindMod.addStatement("//ordt_dv_bind_controls::use_enable_mask = 1'b0;    // if 1 intr will only assert if its enable or mask value is set");
+			intrBindMod.addStatement("//ordt_dv_bind_controls::use_halt = 1'b0;           // if 1 halt mask/enable will be used when use_enable_mask is set");
 			pkgPrefix = "ordt_dv_bind_controls::";
 		}
 		else {
 			intrBindMod.addStatement("//------- intr detect controls");
-			intrBindMod.addStatement("bit enable_intr_check = 1'b1; // if 1 shut down all intr assertions");
-			intrBindMod.addStatement("bit allow_intr = 1'b1;        // if 1 intr will be flagged as warning, not error");
+			intrBindMod.addStatement("bit enable_intr_check = 1'b1;  // if 0 shut down all intr assertions");
+			intrBindMod.addStatement("bit only_error_asserts = 1'b0; // if 1 shut down all non-error intr assertions");
+			intrBindMod.addStatement("bit allow_intr = 1'b0;         // if 1 and use_subcategories isn't set, all intr outputs will be warning, not error");
+			intrBindMod.addStatement("bit use_subcategories = 1'b1;  // if 1 specified subcategory will be used to set assert severity (only if info currently)");
+			intrBindMod.addStatement("bit use_enable_mask = 1'b0;    // if 1 intr will only assert if its enable or mask value is set");
+			intrBindMod.addStatement("bit use_halt = 1'b0;           // if 1 halt mask/enable will be used when use_enable_mask is set");
 		}
+		// add get_severity function 
+		intrBindMod.addStatement("");
+		intrBindMod.addStatement("//------- intr severity settings");
+		intrBindMod.addStatement("typedef enum {INFO, WARN, ERROR} intr_sev_t;");
+		intrBindMod.addStatement("");
+		intrBindMod.addStatement("function intr_sev_t get_severity (string subcat);");
+		intrBindMod.addStatement("  if (" + pkgPrefix + "use_subcategories && (subcat==\"INFO\")) get_severity=INFO;");
+		intrBindMod.addStatement("  else if (" + pkgPrefix + "allow_intr) get_severity=WARN;");
+		intrBindMod.addStatement("  else get_severity=ERROR;");
+		intrBindMod.addStatement("endfunction : get_severity");
+		// add get_message function
+		intrBindMod.addStatement("");
+		intrBindMod.addStatement("//------- intr output message function");
+		intrBindMod.addStatement("function string get_message (string subcat, string sigpath, logic sig, string intr_type, logic intr_en, string halt_type, logic halt_en);");
+		intrBindMod.addStatement("  string bstr, istr, hstr;");
+		intrBindMod.addStatement("  intr_sev_t sev;");
+		intrBindMod.addStatement("  sev = get_severity(subcat);");
+		intrBindMod.addStatement("  bstr = $sformatf(\"Interrupt %s fired (sub-category = %s). Value = %h.\", sigpath, subcat, sig);");
+		intrBindMod.addStatement("  if (intr_type != \"none\") istr = $sformatf(\" %s value = %h.\", intr_type, intr_en);");
+		intrBindMod.addStatement("  if (halt_type != \"none\") hstr = $sformatf(\" Halt(poll) %s value = %h.\", halt_type, halt_en);");
+		intrBindMod.addStatement("  get_message = {bstr, istr, hstr};");
+		intrBindMod.addStatement("endfunction : get_message");	
 		// add property define
 		intrBindMod.addStatement("");
 		intrBindMod.addStatement("//------- intr detect property");
-		intrBindMod.addStatement("property no_rising_intr (sig);");
+		intrBindMod.addStatement("property no_rising_intr (logic sig, logic inhibit, logic intr_mask, logic halt_mask);");
 		intrBindMod.addStatement("  @(posedge "+ defaultClkName + ")");
-		intrBindMod.addStatement("  disable iff (!" + pkgPrefix + "enable_intr_check || "+ builder.getDefaultReset() + ")");
+		intrBindMod.addStatement("  disable iff (inhibit || (" + pkgPrefix + "use_enable_mask && ((!" + pkgPrefix + "use_halt && intr_mask) || (" + pkgPrefix + "use_halt && halt_mask))))");
 		intrBindMod.addStatement("    not $rose(sig);");
 		intrBindMod.addStatement("endproperty : no_rising_intr");	
-		// add all leaf interrupts to to monitored
+		// add interrupts inputs and inhibit signals
 		intrBindMod.addStatement("");
-		intrBindMod.addStatement("//------- intr detect assertions");
+		intrBindMod.addStatement("//------- intr inhibits");
 		intrBindMod.setShowDuplicateSignalErrors(false);  // could be leaf interrupts being used as masks/enables
 		for(IntrDiagInfo intrInfo: intrInfoList) {
-			// add signal inputs
+			// add signal inputs from reg logic module
 			intrBindMod.addSimpleVectorFrom(defaultOutputLoc, intrInfo.getSigName(), 0, intrInfo.getWidth());
 			if (intrInfo.hasIntrEnableOrMask()) intrBindMod.addSimpleVectorFrom(defaultOutputLoc, intrInfo.getIntrEnableName(), 0, intrInfo.getWidth());
 			if (intrInfo.hasHaltEnableOrMask()) intrBindMod.addSimpleVectorFrom(defaultOutputLoc, intrInfo.getHaltEnableName(), 0, intrInfo.getWidth());
+			// define inhibit and assign
+			String inhibitName = "inhibit_" + intrInfo.getSigName();
+			intrBindMod.addScalarWire(inhibitName);
+			intrBindMod.addWireAssign(inhibitName + " = !" + pkgPrefix + "enable_intr_check || "+ builder.getDefaultReset() + " || (" + pkgPrefix + "only_error_asserts && (get_severity(\""+ intrInfo.getSubCategory() + "\") != ERROR));");
+		}
+		// add all leaf interrupts to to monitored
+		intrBindMod.addStatement("");
+		intrBindMod.addStatement("//------- intr detect assertions");
+		for(IntrDiagInfo intrInfo: intrInfoList) {
 			// add assertions 
-			String inSigName = intrInfo.isVector()? "|" + intrInfo.getSigName() : intrInfo.getSigName(); // use or reduction on vectors
-			String assertName = intrInfo.getSigName() + "_intr_assert";
-			String assertMessage = "Interrupt " + intrInfo.getSigPath() + " fired. Value = %h.";
-			String assertMessageParms = intrInfo.getSigName();
-			if (intrInfo.hasIntrEnableOrMask()) { // if intr has an intr enable/mask, display its value
-				assertMessage += " " + intrInfo.getIntrEnableType() + " value = %h.";
-				assertMessageParms += ", " + intrInfo.getIntrEnableName();
-			}
-			if (intrInfo.hasHaltEnableOrMask()) { // if intr has a halt/poll enable/mask, display its value
-				assertMessage += " Halt(poll) " + intrInfo.getHaltEnableType().toLowerCase() + " value = %h.";
-				assertMessageParms += ", " + intrInfo.getHaltEnableName();
-			}
-			intrBindMod.addStatement(assertName.toUpperCase() + " : assert property (no_rising_intr("+ inSigName + "))");
-			intrBindMod.addStatement("else if (!" + pkgPrefix + "allow_intr) $error(\""+ assertMessage + "\", "+ assertMessageParms + ");");
-			intrBindMod.addStatement("else $warning(\""+ assertMessage + "\", "+ assertMessageParms + ");");
+			String redPfix = intrInfo.isVector()? "|" : ""; // use or reduction on vectors
+			String sigName = redPfix + intrInfo.getSigName();
+			String inhibitName = "inhibit_" + intrInfo.getSigName();
+			String invPfix = (intrInfo.hasIntrEnableOrMask() && intrInfo.getIntrEnableType().startsWith("En"))? "!" : ""; // invert if an enable
+			String intrMaskName = intrInfo.hasIntrEnableOrMask()? invPfix + redPfix + intrInfo.getIntrEnableName() : "1'b0";
+			invPfix = (intrInfo.hasHaltEnableOrMask() && intrInfo.getHaltEnableType().startsWith("en"))? "!" : ""; // invert if an enable
+			String haltMaskName = intrInfo.hasHaltEnableOrMask()? invPfix + redPfix + intrInfo.getHaltEnableName() : "1'b0";
+			intrBindMod.addStatement("intr_assert_" + intrInfo.getSigName() + " : assert property (no_rising_intr(" + sigName + ", "  + inhibitName + ", " + intrMaskName + ", " + haltMaskName + "))");
+			String intrEnStr = intrInfo.hasIntrEnableOrMask()? "\"" + intrInfo.getIntrEnableType() + "\", " + intrInfo.getIntrEnableName() : "\"none\", " + sigName;
+			String haltEnStr = intrInfo.hasHaltEnableOrMask()? ", \"" + intrInfo.getHaltEnableType() + "\", " + intrInfo.getHaltEnableName() : ", \"none\", " + sigName;
+			intrBindMod.addStatement("else begin");
+			intrBindMod.addStatement("  string message;");
+			intrBindMod.addStatement("  intr_sev_t sev;");
+			intrBindMod.addStatement("  sev = get_severity(\""+ intrInfo.getSubCategory() + "\");");
+			intrBindMod.addStatement("  message = get_message(\""+ intrInfo.getSubCategory() + "\", \"" + intrInfo.getSigPath() + "\", " + intrInfo.getSigName() + ", " + intrEnStr + haltEnStr + ");");
+			intrBindMod.addStatement("  if (sev==INFO) $info(message);");
+			intrBindMod.addStatement("  else if (sev==WARN) $warning(message);");
+			intrBindMod.addStatement("  else $error(message);");
+			intrBindMod.addStatement("end");
+			intrBindMod.addStatement("");
 		}
 		// print a usage message
-		intrBindMod.addStatement("");
 		intrBindMod.addStatement("//------- " + intrBindModName + " interrupt debug module.  Use by binding as follows in tb:");
 		intrBindMod.addStatement("//        bind " + getName() + " " + intrBindModName + " intr_bind_inst(.*);");
 		// return the module
@@ -969,9 +1021,8 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 	}
 
 	public SystemVerilogModule createCoverBindModule() {
-		SystemVerilogModule coverBindMod = new SystemVerilogModule(builder, getInsideLocs(), defaultClkName, builder.getDefaultReset());
 		String bindModName = getName() + "_cover_bind";
-		coverBindMod.setName(bindModName);
+		SystemVerilogModule coverBindMod = new SystemVerilogModule(builder, bindModName, getInsideLocs(), defaultClkName, builder.getDefaultReset(), ExtParameters.sysVerUseAsyncResets());
 		Integer defaultOutputLoc = getOutsideLocs();
 		SystemVerilogIOSignalList bindIOList = new SystemVerilogIOSignalList("default");
 		coverBindMod.useIOList(bindIOList, defaultOutputLoc);
@@ -1008,11 +1059,13 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 		private boolean intrEnable = true;  // true is enable, false if mask
 		private String haltEnableName; // enable/mask name
 		private boolean haltEnable = true;  // true is enable, false if mask
+		private JspecSubCategory subCategory; // subcategory
 		
-		IntrDiagInfo(String sigName, int width, String sigPath) {
+		IntrDiagInfo(String sigName, int width, String sigPath, JspecSubCategory subCategory) {
 			this.sigName = sigName;
 			this.width = width;
 			this.sigPath = sigPath;
+			this.subCategory = subCategory;
 		}
 		protected String getIntrEnableName() {
 			return intrEnableName;
@@ -1053,6 +1106,9 @@ public class SystemVerilogLogicModule extends SystemVerilogModule {
 		}
 		protected String getSigPath() {
 			return sigPath;
+		}
+		protected String getSubCategory() {
+			return subCategory.toString();
 		}
 	}
 	
