@@ -227,7 +227,7 @@ public class ModRegSet extends ModComponent {
 			return false;
 		if (getClass() != obj.getClass())
 			return false;
-		ModRegister other = (ModRegister) obj;
+		ModRegSet other = (ModRegSet) obj;
 		if (alignedSize == null) {
 			if (other.alignedSize != null)
 				return false;
