@@ -3,6 +3,8 @@
  */
 package ordt.extract;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
@@ -121,8 +123,9 @@ public class Ordt {
 	    	System.out.println("Ordt complete " + new Date());
 	    	System.exit(MsgUtils.getReturnCode());
 		} catch (Exception e) {
-			//errorMessage("Read of rdl file " + inputFile + " failed");
-			e.printStackTrace();
+			StringWriter sw = new StringWriter();
+			e.printStackTrace(new PrintWriter(sw));
+			MsgUtils.errorExit(sw.toString());
 		}
     }
 
