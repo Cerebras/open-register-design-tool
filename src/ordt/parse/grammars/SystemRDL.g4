@@ -441,7 +441,7 @@ NUM
   ;
 
 fragment ESC_DQUOTE
-  : '\\\"'
+  : '\\' '"'
   ;
 
 STR

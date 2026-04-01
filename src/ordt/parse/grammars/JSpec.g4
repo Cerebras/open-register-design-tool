@@ -353,7 +353,7 @@ NUM
   ;
 
 fragment ESC_DQUOTE
-  : '\\\"'
+  : '\\' '"'
   ;
   
 JSTR
