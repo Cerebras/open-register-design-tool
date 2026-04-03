@@ -72,7 +72,7 @@ tasks.named('generateGrammarSource') {
 tasks.named('shadowJar') {
     archiveBaseName = 'Ordt'
     archiveClassifier = ''
-    archiveVersion = ''
+    archiveVersion = project.version.toString()
 
     manifest {
         attributes 'Main-Class': 'ordt.extract.Ordt'
