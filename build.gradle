@@ -1,137 +1,127 @@
 // Gradle build file for ordt
 
+plugins {
+    id 'java'
+    id 'antlr'
+    id 'com.gradleup.shadow' version '9.4.1'
+}
+
 description = 'Tool to generate register RTL, models, and docs using ' +
               'SystemRDL or JSpec input'
 
-// Get version from constant in Ordt.java
-def versionMatcher = file('src/ordt/extract/Ordt.java').text =~ /String version = \"(.*)\";/
+// Extract version from constant in Ordt.java
+def versionMatcher = file('src/ordt/extract/Ordt.java').text =~ /String version = "(.*)";/
 version = versionMatcher[0][1]
 
-buildscript {
-    repositories {
-        jcenter()
-    }
-    dependencies {
-        classpath 'com.github.jengelman.gradle.plugins:shadow:2.0.1'
-    }
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
 }
 
-apply plugin: 'com.github.johnrengelman.shadow'
-apply plugin: 'java'
-apply plugin: 'antlr'
-
 repositories {
-    // Use jcenter for resolving my dependencies.
-    jcenter()
+    mavenCentral()
 }
 
 dependencies {
-    compile 'org.abego.treelayout:org.abego.treelayout.core:1.0.3'
-    antlr   'org.antlr:antlr4:4.5.1-1'
-    runtime 'org.antlr:antlr4-runtime:4.5.1-1'
+    implementation 'org.abego.treelayout:org.abego.treelayout.core:1.0.3'
+    antlr        'org.antlr:antlr4:4.13.2'
+    implementation 'org.antlr:antlr4-runtime:4.13.2'
 }
 
 final antlrSrc = 'src/ordt/parse/grammars'
 final antlrGen = 'build/generated-src/antlr/main'
 
-// Override default srcDirs for the main source set.
 sourceSets {
     main {
         java {
-            srcDirs = ['src/ordt/annotate',
-		       'src/ordt/extract',
-		       'src/ordt/output',
-		       'src/ordt/parameters',
-		       antlrGen ]
+            srcDirs = [
+                'src/ordt/annotate',
+                'src/ordt/extract',
+                'src/ordt/output',
+                'src/ordt/parameters',
+                antlrGen
+            ]
         }
-    	antlr {
-    	    srcDirs = [ antlrSrc ]
-    	}
+        antlr {
+            srcDirs = [antlrSrc]
+        }
     }
 }
 
-// If MyDebugController.java does not exist, then make a copy of
-// MyDebugController.example. If it already exists, then we assume that
-// it might have local edits.It won't be overwritten even if the example file
-// is newer.
-// Use the distclean target to remove the local copy of MyDebugController.java.
-task copyMyDebugController {
+// Copy MyDebugController.example to MyDebugController.java if it does not
+// already exist.  Local edits are preserved.
+// Use the distclean target to remove the generated copy.
+tasks.register('copyMyDebugController') {
     doLast {
-	    if (!file('src/ordt/extract/MyDebugController.java').exists()) {
-	        exec {
-		        commandLine 'cp', 'src/ordt/extract/MyDebugController.example', 
-		            'src/ordt/extract/MyDebugController.java'
-	        }
-	    }
+        def dest = file('src/ordt/extract/MyDebugController.java')
+        if (!dest.exists())
+            dest.bytes = file('src/ordt/extract/MyDebugController.example').bytes
     }
 }
 
-compileJava.dependsOn(copyMyDebugController)
-
-generateGrammarSource {
-    outputs.upToDateWhen { false }  // force compile of all grammar files so import dependencies are picked up
-//    outputDirectory = file(antlrGen)
+tasks.named('compileJava') {
+    dependsOn('copyMyDebugController', 'generateGrammarSource')
 }
 
-shadowJar {
-    baseName = 'Ordt'
-    classifier = null
-    
+// Force recompilation of all grammar files every time so that import
+// dependencies between grammars are always resolved correctly.
+tasks.named('generateGrammarSource') {
+    outputs.upToDateWhen { false }
+}
+
+tasks.named('shadowJar') {
+    archiveBaseName = 'Ordt'
+    archiveClassifier = ''
+    archiveVersion = project.version.toString()
+
     manifest {
-	    attributes 'Main-Class': 'ordt.extract.Ordt'
+        attributes 'Main-Class': 'ordt.extract.Ordt'
     }
 
+    // The antlr plugin adds the full tool jar to the classpath, not just the
+    // runtime.  Exclude it here so only antlr4-runtime ends up in the fat jar.
     dependencies {
-	// The antlr plugin adds the entire library to the jar file,
-	// not just the runtime, so remove this dependency. The runtime
-	// library is named antlr4-runtime, so it won't be affected by
-	// this exclude rule.
-	exclude(dependency('org.antlr:antlr4:.*'))
+        exclude(dependency('org.antlr:antlr4:.*'))
     }
 }
 
-task distclean {
-    dependsOn clean
+tasks.register('distclean') {
+    dependsOn('clean')
     doLast {
-	    exec {
-	        commandLine 'rm', '-f', 'src/ordt/extract/MyDebugController.java'
-	    }
+        file('src/ordt/extract/MyDebugController.java').delete()
     }
 }
 
-// eclipse ide expects java source files to be in directories corresponding to their package.
-// the generateEclipseGrammarSource generates the antlr output and moves output java files into 
-// their respective package directories (note that not all grammars need to be copied)
-task generateEclipseGrammarSource {
-    dependsOn generateGrammarSource
+// Eclipse IDE task: generates ANTLR source and moves output files into the
+// correct package directories under src/ so Eclipse can find them.
+tasks.register('generateEclipseGrammarSource') {
+    dependsOn('generateGrammarSource')
     doLast {
         final destFolder = 'src'
-        moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'ExtParms', antlrGen, destFolder)
-        moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'JSpec', antlrGen, destFolder)
+        moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'ExtParms',  antlrGen, destFolder)
+        moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'JSpec',     antlrGen, destFolder)
         moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'SystemRDL', antlrGen, destFolder)
-        //moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'SimpleSVLexer', antlrGen, destFolder)
-        //moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'SimpleSVParser', antlrGen, destFolder)
-        moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'SimpleSV', antlrGen, destFolder)
+        moveAntlrGeneratedFilesToTheirPackages(antlrSrc, 'SimpleSV',  antlrGen, destFolder)
     }
 }
 
 def moveAntlrGeneratedFilesToTheirPackages(grammarFolder, grammarName, genFolder, destFolder) {
     File grammarFile = file("${grammarFolder}/${grammarName}.g4")
-    final grammarPackage = extractPackageNameFromGrammerFile(grammarFile)
+    final grammarPackage = extractPackageNameFromGrammarFile(grammarFile)
     copy {
         from genFolder
         include "${grammarName}*.*"
-        into destFolder + "/" + grammarPackage.replaceAll("\\.", "/")
+        into "${destFolder}/${grammarPackage.replaceAll('\\.', '/')}"
     }
-    project.delete fileTree(genFolder).include("${grammarName}*.*")
+    delete fileTree(genFolder).include("${grammarName}*.*")
 }
 
-def extractPackageNameFromGrammerFile(File grammarFile) {
-    def grammarPackage = "unknown.package"
-    def packageRegex = ~/[ ]*package[ ]*([a-zA-Z]+[a-zA-Z0-9.-_]*)[ ]*;/
+def extractPackageNameFromGrammarFile(File grammarFile) {
+    def grammarPackage = 'unknown.package'
+    def packageRegex = ~/[ ]*package[ ]*([a-zA-Z][a-zA-Z0-9._-]*)[ ]*;/
     grammarFile.eachLine { line ->
         def matcher = packageRegex.matcher(line)
-        if (matcher.find()){
+        if (matcher.find()) {
             grammarPackage = matcher.group(1)
         }
     }
