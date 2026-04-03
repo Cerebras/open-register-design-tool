@@ -314,8 +314,8 @@ public class ExtParameters extends ExtParmsBaseListener  {
         } catch (FileNotFoundException e) {
         	MsgUtils.errorExit("parameter file not found. "  + e.getMessage());
         } catch (IOException e) {
-            e.printStackTrace();
-        }		
+            MsgUtils.errorExit(e);
+        }
 	}
 
 	// ------------------- ExtParmsBaseListener override methods

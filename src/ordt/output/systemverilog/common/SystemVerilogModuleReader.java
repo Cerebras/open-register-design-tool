@@ -87,8 +87,8 @@ public class SystemVerilogModuleReader extends SimpleSVBaseListener {
         } catch (FileNotFoundException e) {
         	MsgUtils.errorExit("file not found. "  + e.getMessage());
         } catch (IOException e) {
-            e.printStackTrace();
-        }		
+            MsgUtils.errorExit(e);
+        }
 	}
 
 	// ------- parser override methods

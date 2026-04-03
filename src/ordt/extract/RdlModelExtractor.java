@@ -109,8 +109,8 @@ public class RdlModelExtractor extends SystemRDLBaseListener implements RegModel
         } catch (FileNotFoundException e) {
         	MsgUtils.errorExit("rdl file not found. "  + e.getMessage());
         } catch (IOException e) {
-            e.printStackTrace();
-        }		
+            MsgUtils.errorExit(e);
+        }
 	}
 	
 

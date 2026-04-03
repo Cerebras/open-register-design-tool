@@ -1,5 +1,7 @@
 package ordt.output.common;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.Date;
 
 public class MsgUtils {
@@ -8,6 +10,13 @@ public class MsgUtils {
 	private final static int ERROR_EXIT_RC = 8;
 	private static int returnCode = 0;
 	private static String progName = "Ordt";
+
+	/** display exception stack trace as error message and exit */
+	public static void errorExit(Throwable e) {
+		StringWriter sw = new StringWriter();
+		e.printStackTrace(new PrintWriter(sw));
+		errorExit(sw.toString());
+	}
 
 	/** display error message and exit */
 	public static void errorExit(String msg) {
