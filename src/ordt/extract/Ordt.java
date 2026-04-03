@@ -121,8 +121,7 @@ public class Ordt {
 	    	System.out.println("Ordt complete " + new Date());
 	    	System.exit(MsgUtils.getReturnCode());
 		} catch (Exception e) {
-			//errorMessage("Read of rdl file " + inputFile + " failed");
-			e.printStackTrace();
+			MsgUtils.errorExit(e);
 		}
     }
 

@@ -113,8 +113,8 @@ public class JSpecModelExtractor extends JSpecBaseListener implements RegModelIn
         } catch (FileNotFoundException e) {
         	MsgUtils.errorExit("jspec file not found. "  + e.getMessage());
         } catch (IOException e) {
-            e.printStackTrace();
-        }		
+            MsgUtils.errorExit(e);
+        }
 	}
 	
 

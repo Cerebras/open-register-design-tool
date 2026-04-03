@@ -44,7 +44,7 @@ public class SimpleOutputWriter implements OutputWriterIntf {
 		   try {
 			bw.write(MsgUtils.repeat(' ', indentLevel*2) + stmt +"\n");
 		} catch (IOException e) {
-			e.printStackTrace();
+			MsgUtils.errorExit(e);
 		}
 	}
 

@@ -1407,10 +1407,10 @@ public abstract class OutputBuilder implements OutputWriterIntf{
 		   try {
 			bw.write(MsgUtils.repeat(' ', indentLevel*2) + stmt +"\n");
 		} catch (IOException e) {
-			e.printStackTrace();
+			MsgUtils.errorExit(e);
 		}
 	}
-	
+
 	/** write multiple stmts to the specified BufferedWriter */
 	public void writeStmts(BufferedWriter bw, int indentLevel, List<String> outputLines) {
 		Iterator<String> iter = outputLines.iterator();
